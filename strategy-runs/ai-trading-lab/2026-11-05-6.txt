@@ -1,0 +1,27 @@
+Single Candle OB + MSS + FVG, fitted sample with commission
+Date: 2026-11-05
+Sample: fitted sample
+File: AI/ai-futures-trading-lab/data/mes-fut-20260501-20261030.ohlcv-1m.csv.zst
+Window: 2026-05-01 through 2026-10-30
+35940 five-minute bars. One MES. One point is 5 dollars.
+Policy: t1005-r8-long22. No rule was changed.
+
+Commission is the lab setting: 0.62 dollars per contract on each fill.
+One round turn is 1.24 dollars. The gross replay charges nothing.
+Gross closed profit matched the saved book before the fee was applied: 4227.50.
+
+287 closed trades, none left open.
+Fee total 355.88.
+Net 3871.62. Profit factor 1.721.
+Wins 81. Losses 206. The one gross scratch becomes a 1.24 loss.
+No gross winner becomes a loser after the fee.
+Per trade 13.49.
+Best trade 523.76. Without it, 3347.86.
+Halves at 2026-08-01: 3136.46 and 735.16.
+Price drawdown is unchanged at 556.25. The fee is cash paid on top of that path.
+Months, net of the fee: May 469.27, Jun 2448.00, Jul 219.19, Aug 232.94, Sep -99.54, Oct 601.76.
+September is the only red month.
+
+The same 1.24 dollars per closed trade, applied to the published unseen counts
+and not replayed again: the prior six months fall from 515.00 to 120.68.
+The prior twelve months fall from 2731.25 to 1983.53.
