@@ -1,0 +1,26 @@
+Single Candle close-location replay
+Lab file: AI/ai-futures-trading-lab/data/mes-fut-20260501-20261030.ohlcv-1m.csv.zst
+Window: 2026-05-01 through 2026-10-30. November is not in the file.
+Book: the saved market-at-close defaults, not the current chart inputs.
+15-minute chart, 15-minute target, swing 1, breach lookback 2, target swing 1
+Min RR 1, Max Target 25, liquidity 4H, key Daily, lookback 3
+VWAP chase off, New York 9:00-16:00, minutes 1-55, skip Sundays
+Market at the displacement close, 1 contract, commission 0, 5 dollars a point
+
+Close Location 0.75
+The close has to finish in the outer quarter of its own range.
+A weaker displacement is booked and left unmarked.
+A weaker flip, opposite swing break, or continuation leaves the working mark in place.
+
+Saved book, no close-location check
+closed=21 wins=12 losses=9
+net=586.25 profit_factor=2.078
+large losses (pnl <= -50)=5 totaling -431.25
+
+Same book, Close Location 0.75
+closed=13 wins=9 losses=4
+net=806.25 profit_factor=5.674
+large losses=1 totaling -77.50
+Kept: 2026-05-19 12:15 +90, 2026-05-19 14:15 +179, 2026-05-20 10:15 +265, 2026-10-01 13:15 +91, 2026-10-21 14:45 +184
+Dropped the +101 post on 2026-05-04 11:15. Its close sat at 0.67 of the range.
+This replay does not fill Limit at the swing, and it does not use the current 1H target, Min RR 2, or liquidity lookback 1.
