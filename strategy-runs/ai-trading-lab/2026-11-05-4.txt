@@ -1,0 +1,43 @@
+Single Candle OB + MSS + FVG, stage 3
+Date: 2026-11-05
+Sample: 6 month unseen
+File: AI/ai-futures-trading-lab/data/mes-fut-20251101-20260430.ohlcv-1m.csv.zst
+Volume: the matching volume.json
+Window: 2025-11-02 18:00 New York through 2026-04-30 19:55 New York
+34620 five-minute bars. One MES, no commission, $5 per point.
+
+This is the book already chosen on the fitted sample. No rule was added, dropped, or retuned.
+Policy t1005-r8-long22:
+market at the displacement close, swing 1, breach lookback 2
+target 4H, target swing 6, Min RR 2, Max Target 14
+liquidity 4H, key level off, lookback 1, close location 0
+structure window 09:30-16:00 New York, entry from 10:05
+six-bar span at least 8 points, no long more than 22 points above the 09:30 open
+max stop 30, hold a winner, flat a same-session trade at 15:55
+a later signal cannot fill worse than the original stop
+
+Front month by daily volume, back-adjusted to the last contract:
+MESZ5 20251102-20251214 offset 109.75
+MESH6 20251215-20260315 offset 50.00
+MESM6 20260316-20260430 offset 0.00
+Roll MESZ5 to MESH6 on 20251215, spread 59.75, 1380 minutes.
+Roll MESH6 to MESM6 on 20260316, spread 50.00, 1380 minutes.
+
+Result: 318 closed, 71 wins, 247 losses.
+Net +515.00 (+103.00 pt). Profit factor 1.068.
+Drawdown 1261.25 (252.25 pt).
+Peak mark 2026-03-05 14:30, equity +1490.
+Trough mark 2026-04-30 10:15, equity +229.
+Minimum equity -441.25 at 2025-11-13 10:35.
+Largest win +805.00 (+161.00 pt). Largest loss -108.75 (-21.75 pt).
+Without the largest win: -290.00.
+Widest stop 22.75 points. Capped signal exits 13. No loss wider than its planned stop.
+The fitted sample's 2026-08-01 split is after this file, so that split puts every trade in the first half.
+Halves of this file at 2026-02-01: +930.00 and -415.00.
+Trades of 80 points or more: 2.
+2025-11-20 10:45 short post, entry 6886.00, stop 6897.50, target 6725.00, exit 12:10 at the target, +161.00 pt / +805.00.
+2026-02-12 10:30 short continuation, entry 7008.25, stop 7019.50, target 6850.75, exit 15:55 at 6900.50, +107.75 pt / +538.75.
+Months, closed dollars: Nov +714, Dec +236, Jan -20, Feb -120, Mar -2, Apr -292.
+
+The fitted sample and its five-minute cache were not modified.
+This result was not used to change the book.
