@@ -74,6 +74,14 @@ def pivot_low(bars: list[Bar], pivot: int, length: int) -> bool:
     return True
 
 
+def committed(high: float, low: float, close: float, bullish: bool, fraction: float) -> bool:
+    span = high - low
+    location = (close - low) if bullish else (high - close)
+    if fraction == 0:
+        return True
+    return span > 0 and location >= span * fraction
+
+
 def body_high(bar: Bar) -> float:
     return max(bar.open, bar.close)
 
@@ -488,7 +496,13 @@ class PineSourceTests(unittest.TestCase):
         self.assertIn("//@version=6", self.source)
 
     def test_single_candle_predicates(self):
-        self.assertIn("close > swingHigh and close[1] <= swingHigh and close > open", self.source)
+        self.assertIn("close > swingHigh and close[1] <= swingHigh and close > open and f_committed(true)", self.source)
+        self.assertIn("close < swingLow and close[1] >= swingLow and close < open and f_committed(false)", self.source)
+        self.assertIn('input.float(0.75, "Close Location"', self.source)
+        self.assertIn("f_committed(bool bullish)", self.source)
+        self.assertIn("bool flipCommitted = (closedBullZone and f_committed(false)) or (closedBearZone and f_committed(true))", self.source)
+        self.assertIn("if flipCommitted", self.source)
+        self.assertIn("not vwapChased and f_keyOk(continuationBull) and f_committed(continuationBull)", self.source)
         self.assertIn("close < swingLow and close[1] >= swingLow and close < open", self.source)
         self.assertNotIn("close > high[2]", self.source)
         self.assertNotIn("close < low[2]", self.source)
@@ -658,6 +672,13 @@ class StrategySourceTests(unittest.TestCase):
         self.assertNotIn("indicator(", self.source)
         self.assertIn("f_target(swingHigh, low[1], true)", self.source)
         self.assertIn("f_target(swingLow, high[1], false)", self.source)
+        self.assertIn("close > swingHigh and close[1] <= swingHigh and close > open and f_committed(true)", self.source)
+        self.assertIn("close < swingLow and close[1] >= swingLow and close < open and f_committed(false)", self.source)
+        self.assertIn('input.float(0.75, "Close Location"', self.source)
+        self.assertIn("f_committed(bool bullish)", self.source)
+        self.assertIn("bool flipCommitted = (closedBullZone and f_committed(false)) or (closedBearZone and f_committed(true))", self.source)
+        self.assertIn("if flipCommitted", self.source)
+        self.assertIn("not vwapChased and f_keyOk(continuationBull) and f_committed(continuationBull)", self.source)
         self.assertIn('strategy.entry("1C Long", strategy.long, qty = contracts, limit = formation.level)', self.source)
         self.assertIn('strategy.entry("1C Short", strategy.short, qty = contracts, limit = formation.level)', self.source)
         self.assertIn('strategy.entry("1C Long", strategy.long, qty = contracts)\n', self.source)
@@ -782,3 +803,15 @@ class StrategySourceTests(unittest.TestCase):
             cleaned = cleaned.replace(entry, "")
         self.assertNotIn("strategy.entry(", cleaned)
         self.assertNotIn("alertcondition", self.source)
+
+
+class CloseLocationTests(unittest.TestCase):
+    def test_outer_quarter_passes_and_a_wick_against_the_close_fails(self):
+        self.assertTrue(committed(10, 6, 9, True, 0.75))
+        self.assertFalse(committed(10, 6, 8.9, True, 0.75))
+        self.assertTrue(committed(10, 6, 7, False, 0.75))
+        self.assertFalse(committed(10, 6, 7.1, False, 0.75))
+
+    def test_zero_turns_the_check_off_and_a_zero_range_does_not_pass(self):
+        self.assertTrue(committed(10, 10, 10, True, 0))
+        self.assertFalse(committed(10, 10, 10, True, 0.75))

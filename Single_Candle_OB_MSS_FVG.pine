@@ -17,6 +17,10 @@ indicator("Single Candle OB + MSS + FVG", shorttitle = "1C Impulse", overlay = t
 // the open of that same candle. Both draws that close and the swing limit
 // on the same mark. Each leg keeps its own Min RR. The lines stay on the
 // signal. A stop traded after the drawing candle hides the mark.
+// Close Location skips a displacement, a flip, an opposite swing break, and a
+// continuation whose close finishes inside that fraction of its own range.
+// The default is 0.75, the outer quarter. A weaker close still books the swing
+// and leaves the working mark in place. 0 turns the check off.
 
 string GRP_COLORS = "Colors"
 color bullObColor = input.color(color.rgb(30, 136, 229), "Bullish Displacement", group = GRP_COLORS)
@@ -27,6 +31,8 @@ int swingLength = input.int(1, "Swing Length", minval = 1, maxval = 50, group = 
      tooltip = "Pivots become usable only after this many right-side bars have closed. 1 is the nearest one-candle swing. Raise it for a larger swing.")
 int swingBreachLookback = input.int(2, "Swing Breach Lookback", minval = 0, maxval = 50, group = GRP_STRUCTURE,
      tooltip = "The marked candle is the one that closes through the swing. This is how many candles an unclaimed close-through stays open before it is booked. 0 books it on the break candle. A larger number waits until that window ends. The mark still needs the next candle to leave the swing inside a body fair value gap. A wick that never closes through does not book the swing.")
+float closeLocation = input.float(0.75, "Close Location", minval = 0, maxval = 1, step = 0.05, group = GRP_STRUCTURE,
+     tooltip = "The close has to finish in this fraction of the candle, measured from the break extreme. 0.75 keeps a bullish close in the top quarter and a bearish close in the bottom quarter. Equal to the fraction still marks. A weaker close does not arm, does not flip, and does not continue. The swing is still booked, and the working mark stays. 0 turns the check off.")
 
 string GRP_DISPLAY = "Display"
 const string DISPLAY_LATEST = "Latest"
@@ -718,8 +724,13 @@ if barstate.isconfirmed and swingLowOpen and na(bearCloseBar) and close < swingL
     bearCloseBar := bar_index
 int bullCloseAge = na(bullCloseBar) ? na : bar_index - bullCloseBar
 int bearCloseAge = na(bearCloseBar) ? na : bar_index - bearCloseBar
-bool bullishBreakNow = barstate.isconfirmed and swingHighOpen and close > swingHigh and close[1] <= swingHigh and close > open
-bool bearishBreakNow = barstate.isconfirmed and swingLowOpen and close < swingLow and close[1] >= swingLow and close < open
+// A close inside Close Location still books the swing. It does not arm.
+f_committed(bool bullish) =>
+    float span = high - low
+    float location = bullish ? close - low : high - close
+    closeLocation == 0 or (span > 0 and location >= span * closeLocation)
+bool bullishBreakNow = barstate.isconfirmed and swingHighOpen and close > swingHigh and close[1] <= swingHigh and close > open and f_committed(true)
+bool bearishBreakNow = barstate.isconfirmed and swingLowOpen and close < swingLow and close[1] >= swingLow and close < open and f_committed(false)
 
 // The next candle confirms when the broken swing sits strictly inside the body
 // gap. A bullish gap needs the previous body high below the swing and this
@@ -789,10 +800,11 @@ if barstate.isconfirmed and armedDirection != 0
 
 // A close through the marked candle, in the opposite direction, is the new
 // mark. The fair value gap does not apply. The time window does. Min RR does.
-// A liquidity sweep outside the lookback means this flip is not considered, so
-// the working mark stays. Below Min RR, or outside the window, the old mark is
-// removed and nothing is drawn. A wick through the candle does not. Skip
-// Sundays leaves the mark in place.
+// Close Location does. A close inside that fraction is not a flip, so the
+// working mark stays. A liquidity sweep outside the lookback means this flip
+// is not considered, so the working mark stays. Below Min RR, or outside the
+// window, the old mark is removed and nothing is drawn. A wick through the
+// candle does not. Skip Sundays leaves the mark in place.
 bool flippedThisBar = false
 if barstate.isconfirmed and not sundaySkipped and array.size(formations) > 0
     Formation zone = array.get(formations, array.size(formations) - 1)
@@ -801,7 +813,8 @@ if barstate.isconfirmed and not sundaySkipped and array.size(formations) > 0
          close < open and close < zone.impulseLow and not brokeOpposingSwing
     bool closedBearZone = zone.direction == DIR_BEAR and not zone.flipped and bar_index > zone.creationBar + 1 and
          close > open and close > zone.impulseHigh and not brokeOpposingSwing
-    if closedBullZone or closedBearZone
+    bool flipCommitted = (closedBullZone and f_committed(false)) or (closedBearZone and f_committed(true))
+    if flipCommitted
         int flipDirection = closedBullZone ? DIR_BEAR : DIR_BULL
         bool flipLiquidity = f_liquidityOk(flipDirection == DIR_BULL)
         if flipLiquidity
@@ -1018,7 +1031,7 @@ if continuationDir != 0 and barstate.isconfirmed and not sundaySkipped and not f
     float vwapDistance = continuationBull ? continuationClose - sessionVwap : sessionVwap - continuationClose
     bool vwapChased = useVwapChase and not na(sessionVwap) and continuationRisk > 0 and vwapDistance > vwapChase * continuationRisk
     [continuationTarget, continuationAnchor, continuationUnder, continuationTooClose] = f_target(continuationClose, continuationOpen, continuationBull)
-    if continuationStopSide and not continuationTooClose and not vwapChased and f_keyOk(continuationBull)
+    if continuationStopSide and not continuationTooClose and not vwapChased and f_keyOk(continuationBull) and f_committed(continuationBull)
         int continuationKind = structureDirection == continuationDir ? KIND_BOS : KIND_MSS
         structureDirection := continuationDir
         Formation continuationFormation = Formation.new(continuationDir, continuationKind, bar_index, bar_index, continuationClose,
