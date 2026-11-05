@@ -1,0 +1,42 @@
+Single Candle entry gate on the repaired five-minute book
+Lab file: AI/ai-futures-trading-lab/data/mes-fut-20260501-20261030.ohlcv-1m.csv.zst
+Window: 2026-05-01 through 2026-10-30. November is not in the file.
+Series: back-adjusted MES front month. One contract. Commission 0. One point is 5 dollars.
+Script: AI/ai-futures-trading-lab/experiments/single_candle_hole_search.py
+Policy: t1005-r8-long22
+Report: reports/single-candle-chart-search/holes-wave6.txt
+
+Chart: five minutes. Market at the close.
+Close Location off. Target 4H, target swing 6, Min RR 2, Max Target 14.
+Liquidity 4H, key level off, lookback 1, VWAP chase off.
+Structure window 09:30-16:00 New York, every minute. Skip Sundays off.
+A signal before 10:05 still updates structure. The order is refused.
+No new entry before 10:05 New York.
+The last six five-minute bars must span at least 8 points.
+No long whose fill is more than 22 points above that day's 09:30 open.
+No order whose stop is wider than 30 points.
+A trade in profit at the previous close is not closed or reversed by the next signal.
+A same-session trade still open at 15:55 is flattened at that bar's close.
+A later signal cannot fill worse than the original stop in this replay.
+A live stop, including a gap through the stop, fills at the walk price.
+
+closed=287 wins=81 losses=205 scratch=1
+net=4227.50 profit_factor=1.827 drawdown=556.25
+worst=-86.25 min_equity=-82.50 at 2026-05-01 13:50
+without the best trade=3702.50
+h1=3317.50 h2=910.00
+widest_stop=29 capped=7 gap_losses=0
+
+The three required trades are unchanged:
+2026-06-09 10:10 short, entry 7567.25, stop 7591.75, target 7485.75, +81.50 points, +407.50
+2026-06-09 12:55 long, entry 7417.50, stop 7388.50, exit 15:55 at 7522.00, +104.50 points, +522.50
+2026-06-17 10:30 short, entry 7657.25, stop 7666.50, exit 15:55 at 7559.25, +98 points, +490.00
+A fourth trade of at least 80 points: 2026-06-05 11:20 short, +105 points, +525.00
+
+Drawdown: peak mark 2026-07-27 05:45 equity +3640, trough 2026-07-29 15:25 equity +3084.
+The account is still about +3084 at the bottom of that giveback.
+Months: May +534, Jun +2510, Jul +274, Aug +288, Sep -42, Oct +665.
+Late October is still about -246.
+
+This is the book the Pine defaults now copy. TradingView cannot book a late signal
+at the original stop the way this replay does. The stop order is what caps a live stop.
