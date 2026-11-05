@@ -1,0 +1,14 @@
+Single Candle OB + MSS + FVG, PyneCore drawing check
+Date: 2026-11-05
+Change: a later mark of the same swept price, side, and pool deletes the earlier sweep line and label. Entries, stops, and targets are unchanged.
+
+Scripts compiled with PyneCore into the Pyne workdir and run on mes-front.ohlcv, chart timeframe 5.
+That file is the unadjusted front-month series of the fitted sample, 1 May 2026 through 30 Oct 2026.
+35,940 five-minute bars. The run ended on 2026-10-30 20:59 UTC.
+Defaults, including Liquidity Timeframe 4H, Key Level Off, Liquidity Lookback 1, Display Mode Latest.
+
+Strategy summary on that unadjusted series: 341 closed trades, net -38.50, profit factor 0.9758, max equity drawdown 407, largest win 104.50, largest loss -25.25, commission 0.
+This is the same unadjusted Pyne result as before the label change. It is not the lab book.
+
+A label journal from 2026-06-08 through 2026-06-11 created 11 labels reading "4H Sweep".
+The prices 7461.50 and 7377.75 were each marked more than once. One label was live for a price at a time.
