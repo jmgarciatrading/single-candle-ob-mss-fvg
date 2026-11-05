@@ -19,8 +19,14 @@ indicator("Single Candle OB + MSS + FVG", shorttitle = "1C Impulse", overlay = t
 // signal. A stop traded after the drawing candle hides the mark.
 // Close Location skips a displacement, a flip, an opposite swing break, and a
 // continuation whose close finishes inside that fraction of its own range.
-// The default is 0.75, the outer quarter. A weaker close still books the swing
-// and leaves the working mark in place. 0 turns the check off.
+// The default is 0, so the check is off. A weaker close still books the swing
+// and leaves the working mark in place.
+// The structure window defaults to 09:30 until 16:00 New York, every minute.
+// A separate entry check skips the trade mark. It does not skip the swing,
+// the zone, the flip, or the continuation. The defaults skip a mark before
+// 10:05, a six-bar range under 8 points, a long more than 22 points above
+// that day's 09:30 open, and a stop wider than 30 points. 0 on each of those
+// inputs turns that one check off. The zone is still stored.
 
 string GRP_COLORS = "Colors"
 color bullObColor = input.color(color.rgb(30, 136, 229), "Bullish Displacement", group = GRP_COLORS)
@@ -31,7 +37,7 @@ int swingLength = input.int(1, "Swing Length", minval = 1, maxval = 50, group = 
      tooltip = "Pivots become usable only after this many right-side bars have closed. 1 is the nearest one-candle swing. Raise it for a larger swing.")
 int swingBreachLookback = input.int(2, "Swing Breach Lookback", minval = 0, maxval = 50, group = GRP_STRUCTURE,
      tooltip = "The marked candle is the one that closes through the swing. This is how many candles an unclaimed close-through stays open before it is booked. 0 books it on the break candle. A larger number waits until that window ends. The mark still needs the next candle to leave the swing inside a body fair value gap. A wick that never closes through does not book the swing.")
-float closeLocation = input.float(0.75, "Close Location", minval = 0, maxval = 1, step = 0.05, group = GRP_STRUCTURE,
+float closeLocation = input.float(0, "Close Location", minval = 0, maxval = 1, step = 0.05, group = GRP_STRUCTURE,
      tooltip = "The close has to finish in this fraction of the candle, measured from the break extreme. 0.75 keeps a bullish close in the top quarter and a bearish close in the bottom quarter. Equal to the fraction still marks. A weaker close does not arm, does not flip, and does not continue. The swing is still booked, and the working mark stays. 0 turns the check off.")
 
 string GRP_DISPLAY = "Display"
@@ -41,7 +47,7 @@ string displayMode = input.string(DISPLAY_LATEST, "Display Mode",
      options = [DISPLAY_LATEST, DISPLAY_ALL], group = GRP_DISPLAY)
 
 string GRP_TARGET = "Target"
-string targetChoice = input.string("1H", "Timeframe Target", options = ["Off", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_TARGET,
+string targetChoice = input.string("4H", "Timeframe Target", options = ["Off", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_TARGET,
      tooltip = "Take profit is the newest confirmed swing on this timeframe beyond the entry. A bullish signal uses a swing high above that entry. A bearish signal uses a swing low below it. A wick through the swing does not skip it. Limit at the swing puts the stop on the previous candle's low for a bullish signal and on its high for a bearish signal. That distance starts at the breached swing. Market at close puts the stop on the open of the displacement candle and measures the distance from that candle's close. When no target swing is beyond the entry, the target is two times that distance. Off does not use a swing. Max Target then sets the target, and 0 leaves it empty. Min RR checks the final target: the swing, that two-times fallback, or the Max Target cap. Equal to the multiple still marks. Min RR above 0 leaves the candle unmarked when the final target is closer than that multiple. A flip uses the same multiple. A timeframe below the chart leaves the swing target off. Min RR above 0 then leaves the candle unmarked.")
 int minRr = input.int(2, "Min RR", minval = 0, maxval = 50, group = GRP_TARGET,
      tooltip = "The candle is not marked when the final target is closer than this multiple of the stop distance. Limit at the swing measures that distance from the breached swing to the previous candle. Market at close measures it from the close of the displacement candle to the open of that same candle. The final target is the higher-timeframe swing, the two-times fallback when no swing is beyond the entry, or the Max Target cap when that cap is closer. A flip uses the same multiple. Equal to the multiple still marks. 0 turns this check off. The break is still booked. The default is 2.")
@@ -53,7 +59,7 @@ int targetSwingLength = input.int(6, "Target Swing Length", minval = 1, maxval =
 string GRP_LIQUIDITY = "Liquidity"
 string liquidityChoice = input.string("4H", "Liquidity Timeframe", options = ["Off", "Same", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_LIQUIDITY,
      tooltip = "The mark waits for a chart candle that sweeps this timeframe and closes back inside. Same uses Timeframe Target. The pool is the last closed candle on that timeframe. A bullish sweep trades below that candle's low and the close finishes back inside it. A bearish sweep trades above that candle's high and the close finishes back inside it. Off leaves this filter out. A timeframe below the chart leaves it out. The break is still booked. A later close through the swept side invalidates that sweep before the mark. A wick through that side does not. The next sweep of that side starts again. A continuation follows that close. The breaching candle is swept, then a later candle closes through that sweep. The entry is that candle's close and the stop is its open.")
-string keyLevelChoice = input.string("Daily", "Key Level", options = ["Off", "Same", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_LIQUIDITY,
+string keyLevelChoice = input.string("Off", "Key Level", options = ["Off", "Same", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_LIQUIDITY,
      tooltip = "Off leaves the mark on Liquidity Timeframe alone. Any other choice starts when an untapped high or low of this timeframe is swept or closed through. A chart candle then has to close back inside that candle's range. Liquidity Lookback counts the bars after that close. The liquidity sweep can be older and stays valid until a close through its side. Same uses Timeframe Target. A timeframe below the chart leaves this out. With this set and Liquidity Timeframe off, nothing is marked.")
 int liquidityLookback = input.int(1, "Liquidity Lookback", minval = 0, maxval = 500, group = GRP_LIQUIDITY,
      tooltip = "Chart candles. 1 keeps a liquidity sweep on this candle or the candle before it. 0 allows only a sweep on the signal candle. On a 15-minute chart, 1 is 15 minutes. A flip uses this count. With Key Level on, the count starts when a chart candle closes back inside the key range. The liquidity sweep can be older.")
@@ -65,12 +71,12 @@ float vwapChase = input.float(4, "VWAP Chase R", minval = 0, step = 0.25, group 
 string GRP_TIME = "Time Window"
 bool useTimeWindow = input.bool(true, "Use Time Window", group = GRP_TIME)
 int startHour = input.int(9, "Start Time", minval = 0, maxval = 23, group = GRP_TIME, inline = "start")
-int startMinute = input.int(0, "Minute", minval = 0, maxval = 59, group = GRP_TIME, inline = "start")
+int startMinute = input.int(30, "Minute", minval = 0, maxval = 59, group = GRP_TIME, inline = "start")
 int endHour = input.int(16, "End Time", minval = 0, maxval = 23, group = GRP_TIME, inline = "end")
 int endMinute = input.int(0, "Minute", minval = 0, maxval = 59, group = GRP_TIME, inline = "end")
-int minuteWindowStart = input.int(1, "Minute Window", minval = 0, maxval = 59, group = GRP_TIME, inline = "minute",
+int minuteWindowStart = input.int(0, "Minute Window", minval = 0, maxval = 59, group = GRP_TIME, inline = "minute",
      tooltip = "Used only while Use Time Window is on. 1 to 55 keeps :15, :30, and :45 on a 15-minute chart and drops the :00 candle. 0 to 60 keeps the whole hour.")
-int minuteWindowEnd = input.int(55, "to", minval = 1, maxval = 60, group = GRP_TIME, inline = "minute",
+int minuteWindowEnd = input.int(60, "to", minval = 1, maxval = 60, group = GRP_TIME, inline = "minute",
      tooltip = "Exclusive end minute in the same hour. 15 excludes the candle that opens at minute 15. 60 includes the full hour.")
 string timeZone = input.string("America/New_York", "Time Zone", group = GRP_TIME,
      tooltip = "Use an IANA timezone. America/New_York follows US daylight-saving transitions.")
@@ -81,11 +87,21 @@ string GRP_ENTRY = "Entry"
 const string ENTRY_LIMIT = "Limit at the swing"
 const string ENTRY_MARKET = "Market at close"
 const string ENTRY_BOTH = "Both"
-string entryModel = input.string(ENTRY_LIMIT, "Entry Model",
+string entryModel = input.string(ENTRY_MARKET, "Entry Model",
      options = [ENTRY_LIMIT, ENTRY_MARKET, ENTRY_BOTH], group = GRP_ENTRY,
      tooltip = "Limit at the swing draws the black line on the breached swing. Its stop is the previous candle's low for a bullish signal and that candle's high for a bearish signal. Market at close draws the entry on the close of the displacement candle. For a swing break that is the candle that closed through the swing. The next candle confirms the gap and does not set the price. For a flip the displacement candle is the flip candle. The stop is the open of that same candle. The target and Min RR are measured from that close to that open. A close that does not clear Min RR is left unmarked. Both draws that close and that swing on the same mark. Each leg keeps its own Min RR. A leg that misses it is left off. The market lines can show when the confirming candle is outside the window. The swing lines are added only when that candle is inside the window. The lines stay on the signal candles.")
 bool marketEntry = entryModel == ENTRY_MARKET
 bool bothEntry = entryModel == ENTRY_BOTH
+int entryFromHour = input.int(10, "Entry From", minval = 0, maxval = 23, group = GRP_ENTRY, inline = "entryfrom",
+     tooltip = "No trade mark before this clock in Time Zone. The swing, the zone, a flip, and a continuation are still stored. 0:00 turns this check off. The default is 10:05. The structure window still starts at its own Start Time.")
+int entryFromMinute = input.int(5, "Minute", minval = 0, maxval = 59, group = GRP_ENTRY, inline = "entryfrom",
+     tooltip = "Minute of Entry From. 10 and 5 is 10:05. A bar at that minute can still be marked. An earlier bar can still update structure.")
+float minRange = input.float(8, "Min Range", minval = 0, step = 0.25, group = GRP_ENTRY,
+     tooltip = "The last six chart bars, including this bar, have to span at least this many points. 0 turns the check off. A quieter bar is stored and left unmarked.")
+float longExtension = input.float(22, "Long Extension", minval = 0, step = 0.25, group = GRP_ENTRY,
+     tooltip = "A long mark is skipped when its price is more than this many points above the open of the first bar at or after 09:30 in Time Zone. 0 turns the check off. Shorts are not filtered. A skipped long still updates structure.")
+float maxStop = input.float(30, "Max Stop", minval = 0, step = 0.25, group = GRP_ENTRY,
+     tooltip = "A mark is skipped when the distance from its entry to its stop is wider than this. 0 turns the check off. The stop on a drawn mark is not widened.")
 
 string targetPine = targetChoice == "Daily" ? "D" : targetChoice == "4H" ? "240" : targetChoice == "1H" ? "60" : targetChoice == "15M" ? "15" : targetChoice == "5M" ? "5" : targetChoice == "1M" ? "1" : timeframe.period
 bool targetTfOk = targetChoice == "Off" or timeframe.in_seconds(targetPine) >= timeframe.in_seconds()
@@ -177,6 +193,24 @@ f_inWindowAt(int t) =>
 
 f_inWindow() =>
     f_inWindowAt(time)
+
+// Entry checks read these. They stay outside the function so each bar has one value.
+int entryFromMinuteOfDay = entryFromHour * 60 + entryFromMinute
+var float sessionOpen = na
+var int sessionDay = na
+int nyDay = year(time, timeZone) * 10000 + month(time, timeZone) * 100 + dayofmonth(time, timeZone)
+int nyMinute = hour(time, timeZone) * 60 + minute(time, timeZone)
+if nyMinute >= 9 * 60 + 30 and nyDay != sessionDay
+    sessionDay := nyDay
+    sessionOpen := open
+float windowSpan = ta.highest(high, 6) - ta.lowest(low, 6)
+
+f_entryOk(int direction, float entryPrice, float stopPrice) =>
+    bool timeOk = entryFromMinuteOfDay == 0 or nyMinute >= entryFromMinuteOfDay
+    bool rangeOk = minRange <= 0 or (not na(windowSpan) and windowSpan >= minRange)
+    bool longOk = longExtension <= 0 or direction != DIR_BULL or na(sessionOpen) or entryPrice - sessionOpen <= longExtension
+    bool riskOk = maxStop <= 0 or na(entryPrice) or na(stopPrice) or math.abs(entryPrice - stopPrice) <= maxStop
+    timeOk and rangeOk and longOk and riskOk
 
 f_touched(float zoneTop, float zoneBottom) =>
     high >= zoneBottom and low <= zoneTop
@@ -692,6 +726,7 @@ var float armedSwingTarget = na
 var int armedSwingTargetTime = na
 var bool armedSwingTooClose = true
 var bool armedMarketLive = false
+var bool armedEntryOk = false
 var int armedSweepBar = na
 var float armedSweepPrice = na
 
@@ -755,6 +790,7 @@ if barstate.isconfirmed and armedDirection != 0
             float displacementClose = close[1]
             [resolvedLevel, useTarget, useAnchor, useUnder, useTooClose] = f_resolveEntry(armedLevel, armedStop, armedTarget, armedTargetTime, armedUnder, false, armedDirection == DIR_BULL, displacementClose)
             float useLevel = marketEntry ? displacementClose : resolvedLevel
+            bool confirmShow = ((marketEntry or bothEntry) and (armedEntryOk or f_entryOk(armedDirection, close, armedStop))) or ((not marketEntry or bothEntry) and f_entryOk(armedDirection, armedLevel, armedSwingStop))
             if bothEntry
                 bool limitLeg = not armedSwingTooClose and f_inWindow()
                 bool marketLeg = armedMarketLive
@@ -778,8 +814,9 @@ if barstate.isconfirmed and armedDirection != 0
                     formation.sweepPrice := armedSweepPrice
                     formation.opposingSwing := armedDirection == DIR_BULL ? swingLow : swingHigh
                     if f_store(formation)
-                        f_show(formation)
-                        f_labelFirstSweep(formation)
+                        if confirmShow
+                            f_show(formation)
+                            f_labelFirstSweep(formation)
                         formedThisBar := true
             else if not useTooClose
                 float gapTop = armedDirection == DIR_BULL ? candle3BodyLow : armedCandle1BodyLow
@@ -792,8 +829,9 @@ if barstate.isconfirmed and armedDirection != 0
                 formation.sweepPrice := armedSweepPrice
                 formation.opposingSwing := armedDirection == DIR_BULL ? swingLow : swingHigh
                 if f_store(formation)
-                    f_show(formation)
-                    f_labelFirstSweep(formation)
+                    if confirmShow
+                        f_show(formation)
+                        f_labelFirstSweep(formation)
                     formedThisBar := true
     armedDirection := 0
     armedMarketLive := false
@@ -868,12 +906,14 @@ if barstate.isconfirmed and not sundaySkipped and array.size(formations) > 0
                     flipFormation.swingLevel := useLevel
                     flipFormation.swingStop := flipStop
                     flipFormation.swingTarget := useTarget
+            bool flipShow = ((marketEntry or bothEntry) and f_entryOk(flipDirection, close, open)) or ((not marketEntry or bothEntry) and f_entryOk(flipDirection, useLevel, flipStop))
             if flipTooClose or not flipWindow
                 f_deleteVisuals(zone)
                 f_store(flipFormation)
             else if f_store(flipFormation)
-                f_show(flipFormation)
-                f_labelFirstSweep(flipFormation)
+                if flipShow
+                    f_show(flipFormation)
+                    f_labelFirstSweep(flipFormation)
                 formedThisBar := true
             flippedThisBar := true
 
@@ -908,8 +948,9 @@ if barstate.isconfirmed and not sundaySkipped and not flippedThisBar and not for
             postFormation.sweepBar := postBull ? firstBullSweepBar : firstBearSweepBar
             postFormation.sweepPrice := postBull ? firstBullSweepPrice : firstBearSweepPrice
             if f_store(postFormation)
-                f_show(postFormation)
-                f_labelFirstSweep(postFormation)
+                if f_entryOk(postDir, postClose, postOpen)
+                    f_show(postFormation)
+                    f_labelFirstSweep(postFormation)
                 formedThisBar := true
 
 if not sundaySkipped and not flippedThisBar and bullishBreakNow and f_inWindow()
@@ -960,6 +1001,7 @@ if not sundaySkipped and not flippedThisBar and bullishBreakNow and f_inWindow()
             armedTargetTime := bullArmAnchor
             armedUnder := bullArmUnder
             armedMarketLive := not bullArmTooClose
+        armedEntryOk := (marketEntry or bothEntry) and f_entryOk(DIR_BULL, close, open)
         armedSweepBar := firstBullSweepBar
         armedSweepPrice := firstBullSweepPrice
 else if not sundaySkipped and not flippedThisBar and barstate.isconfirmed and swingHighOpen and not na(bullCloseAge) and bullCloseAge == swingBreachLookback
@@ -1012,6 +1054,7 @@ if not sundaySkipped and not flippedThisBar and bearishBreakNow and f_inWindow()
             armedTargetTime := bearArmAnchor
             armedUnder := bearArmUnder
             armedMarketLive := not bearArmTooClose
+        armedEntryOk := (marketEntry or bothEntry) and f_entryOk(DIR_BEAR, close, open)
         armedSweepBar := firstBearSweepBar
         armedSweepPrice := firstBearSweepPrice
 else if not sundaySkipped and not flippedThisBar and barstate.isconfirmed and swingLowOpen and not na(bearCloseAge) and bearCloseAge == swingBreachLookback
@@ -1043,8 +1086,9 @@ if continuationDir != 0 and barstate.isconfirmed and not sundaySkipped and not f
         continuationFormation.sweepBar := continuationBull ? bullContSweepBar : bearContSweepBar
         continuationFormation.sweepPrice := continuationBull ? bullContSweepPrice : bearContSweepPrice
         if f_store(continuationFormation)
-            f_show(continuationFormation)
-            f_labelFirstSweep(continuationFormation)
+            if f_entryOk(continuationDir, continuationClose, continuationOpen)
+                f_show(continuationFormation)
+                f_labelFirstSweep(continuationFormation)
             formedThisBar := true
 continuationDir := 0
 

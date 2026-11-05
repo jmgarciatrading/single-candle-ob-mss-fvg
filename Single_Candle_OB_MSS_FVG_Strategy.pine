@@ -28,8 +28,19 @@ strategy("Single Candle OB + MSS + FVG Strategy", shorttitle = "1C St", overlay 
 // the lower-timeframe formation. The sweep candle itself leaves the trade open.
 // Close Location skips a displacement, a flip, an opposite swing break, and a
 // continuation whose close finishes inside that fraction of its own range.
-// The default is 0.75, the outer quarter. A weaker close still books the swing
-// and leaves the working mark in place. 0 turns the check off.
+// The default is 0, so the check is off. A weaker close still books the swing
+// and leaves the working mark in place.
+// The structure window defaults to 09:30 until 16:00 New York, every minute.
+// A separate entry check refuses the order and the trade mark. It does not
+// refuse the swing, the zone, the flip, or the continuation. The defaults
+// refuse an order before 10:05, a six-bar range under 8 points, a long more
+// than 22 points above that day's 09:30 open, and a stop wider than 30 points.
+// 0 on each of those inputs turns that one check off.
+// While a trade is in profit at the previous close, a later signal does not
+// close it and does not reverse it. A trade opened before 15:55 is closed on
+// the first bar at or after 15:55 in the same session.
+// A later signal closes at that bar's close. TradingView does not move that
+// fill back to the original stop. The stop order is what caps a live stop.
 
 string GRP_COLORS = "Colors"
 color bullObColor = input.color(color.rgb(30, 136, 229), "Bullish Displacement", group = GRP_COLORS)
@@ -40,7 +51,7 @@ int swingLength = input.int(1, "Swing Length", minval = 1, maxval = 50, group = 
      tooltip = "Pivots become usable only after this many right-side bars have closed. 1 is the nearest one-candle swing. Raise it for a larger swing.")
 int swingBreachLookback = input.int(2, "Swing Breach Lookback", minval = 0, maxval = 50, group = GRP_STRUCTURE,
      tooltip = "The marked candle is the one that closes through the swing. This is how many candles an unclaimed close-through stays open before it is booked. 0 books it on the break candle. A larger number waits until that window ends. The mark still needs the next candle to leave the swing inside a body fair value gap. A wick that never closes through does not book the swing.")
-float closeLocation = input.float(0.75, "Close Location", minval = 0, maxval = 1, step = 0.05, group = GRP_STRUCTURE,
+float closeLocation = input.float(0, "Close Location", minval = 0, maxval = 1, step = 0.05, group = GRP_STRUCTURE,
      tooltip = "The close has to finish in this fraction of the candle, measured from the break extreme. 0.75 keeps a bullish close in the top quarter and a bearish close in the bottom quarter. Equal to the fraction still marks. A weaker close does not arm, does not flip, and does not continue. The swing is still booked, and the working mark stays. 0 turns the check off.")
 
 string GRP_DISPLAY = "Display"
@@ -50,7 +61,7 @@ string displayMode = input.string(DISPLAY_LATEST, "Display Mode",
      options = [DISPLAY_LATEST, DISPLAY_ALL], group = GRP_DISPLAY)
 
 string GRP_TARGET = "Target"
-string targetChoice = input.string("1H", "Timeframe Target", options = ["Off", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_TARGET,
+string targetChoice = input.string("4H", "Timeframe Target", options = ["Off", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_TARGET,
      tooltip = "Take profit is the newest confirmed swing on this timeframe beyond the entry. A bullish signal uses a swing high above that entry. A bearish signal uses a swing low below it. A wick through the swing does not skip it. Limit at the swing puts the stop on the previous candle's low for a bullish signal and on its high for a bearish signal. That distance starts at the breached swing. Market at close puts the stop on the open of the displacement candle and measures the distance from that candle's close. When no target swing is beyond the entry, the target is two times that distance. Off does not use a swing. Max Target then sets the target, and 0 leaves it empty. Min RR checks the final target: the swing, that two-times fallback, or the Max Target cap. Equal to the multiple still marks. Min RR above 0 leaves the candle unmarked when the final target is closer than that multiple. A flip uses the same multiple. A timeframe below the chart leaves the swing target off. Min RR above 0 then leaves the candle unmarked.")
 int minRr = input.int(2, "Min RR", minval = 0, maxval = 50, group = GRP_TARGET,
      tooltip = "The candle is not marked when the final target is closer than this multiple of the stop distance. Limit at the swing measures that distance from the breached swing to the previous candle. Market at close measures it from the close of the displacement candle to the open of that same candle. The final target is the higher-timeframe swing, the two-times fallback when no swing is beyond the entry, or the Max Target cap when that cap is closer. A flip uses the same multiple. Equal to the multiple still marks. 0 turns this check off. The break is still booked. The default is 2.")
@@ -62,7 +73,7 @@ int targetSwingLength = input.int(6, "Target Swing Length", minval = 1, maxval =
 string GRP_LIQUIDITY = "Liquidity"
 string liquidityChoice = input.string("4H", "Liquidity Timeframe", options = ["Off", "Same", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_LIQUIDITY,
      tooltip = "The mark waits for a chart candle that sweeps this timeframe and closes back inside. Same uses Timeframe Target. The pool is the last closed candle on that timeframe. A bullish sweep trades below that candle's low and the close finishes back inside it. A bearish sweep trades above that candle's high and the close finishes back inside it. Off leaves this filter out. A timeframe below the chart leaves it out. The break is still booked. An open trade closes when a later mark validates the next sweep. The sweep candle does not close the trade. A later close through the swept side invalidates that sweep before the mark. A wick through that side does not. The next sweep of that side starts again. A continuation follows that close. The breaching candle is swept, then a later candle closes through that sweep. The entry is that candle's close and the stop is its open. The strategy sends a market order on that close. The fill is that close.")
-string keyLevelChoice = input.string("Daily", "Key Level", options = ["Off", "Same", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_LIQUIDITY,
+string keyLevelChoice = input.string("Off", "Key Level", options = ["Off", "Same", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_LIQUIDITY,
      tooltip = "Off leaves the mark on Liquidity Timeframe alone. Any other choice starts when an untapped high or low of this timeframe is swept or closed through. A chart candle then has to close back inside that candle's range. Liquidity Lookback counts the bars after that close. The liquidity sweep can be older and stays valid until a close through its side. Same uses Timeframe Target. A timeframe below the chart leaves this out. With this set and Liquidity Timeframe off, nothing is marked.")
 int liquidityLookback = input.int(1, "Liquidity Lookback", minval = 0, maxval = 500, group = GRP_LIQUIDITY,
      tooltip = "Chart candles. 1 keeps a liquidity sweep on this candle or the candle before it. 0 allows only a sweep on the signal candle. On a 15-minute chart, 1 is 15 minutes. A flip uses this count. With Key Level on, the count starts when a chart candle closes back inside the key range. The liquidity sweep can be older.")
@@ -74,12 +85,12 @@ float vwapChase = input.float(4, "VWAP Chase R", minval = 0, step = 0.25, group 
 string GRP_TIME = "Time Window"
 bool useTimeWindow = input.bool(true, "Use Time Window", group = GRP_TIME)
 int startHour = input.int(9, "Start Time", minval = 0, maxval = 23, group = GRP_TIME, inline = "start")
-int startMinute = input.int(0, "Minute", minval = 0, maxval = 59, group = GRP_TIME, inline = "start")
+int startMinute = input.int(30, "Minute", minval = 0, maxval = 59, group = GRP_TIME, inline = "start")
 int endHour = input.int(16, "End Time", minval = 0, maxval = 23, group = GRP_TIME, inline = "end")
 int endMinute = input.int(0, "Minute", minval = 0, maxval = 59, group = GRP_TIME, inline = "end")
-int minuteWindowStart = input.int(1, "Minute Window", minval = 0, maxval = 59, group = GRP_TIME, inline = "minute",
+int minuteWindowStart = input.int(0, "Minute Window", minval = 0, maxval = 59, group = GRP_TIME, inline = "minute",
      tooltip = "Used only while Use Time Window is on. 1 to 55 keeps :15, :30, and :45 on a 15-minute chart and drops the :00 candle. 0 to 60 keeps the whole hour.")
-int minuteWindowEnd = input.int(55, "to", minval = 1, maxval = 60, group = GRP_TIME, inline = "minute",
+int minuteWindowEnd = input.int(60, "to", minval = 1, maxval = 60, group = GRP_TIME, inline = "minute",
      tooltip = "Exclusive end minute in the same hour. 15 excludes the candle that opens at minute 15. 60 includes the full hour.")
 string timeZone = input.string("America/New_York", "Time Zone", group = GRP_TIME,
      tooltip = "Use an IANA timezone. America/New_York follows US daylight-saving transitions.")
@@ -90,15 +101,29 @@ string GRP_ENTRY = "Entry"
 const string ENTRY_LIMIT = "Limit at the swing"
 const string ENTRY_MARKET = "Market at close"
 const string ENTRY_BOTH = "Both"
-string entryModel = input.string(ENTRY_LIMIT, "Entry Model",
+string entryModel = input.string(ENTRY_MARKET, "Entry Model",
      options = [ENTRY_LIMIT, ENTRY_MARKET, ENTRY_BOTH], group = GRP_ENTRY,
      tooltip = "Limit at the swing rests a limit on the candle after the mark. Its stop is the previous candle's low for a bullish signal and that candle's high for a bearish signal. The mark's candle does not fill that limit. Market at close sends a market order on the displacement candle, and the black line is that candle's close. For a swing break that is the candle that closed through the swing. The next candle confirms the gap and does not set the price. When the gap does not confirm, that fill is closed. For a flip the displacement candle is the flip candle. The stop is the open of that same candle and is attached on the next candle. The target and Min RR are measured from that close to that open. A close that does not clear Min RR is left unmarked. The market order fills on that candle's close. Both sends that market order and rests that swing limit. Each leg uses Contracts and keeps its own Min RR. A leg that misses Min RR is left off. The market fill can confirm outside the window. The limit is added only when the confirming candle is inside the window.")
 bool marketEntry = entryModel == ENTRY_MARKET
 bool bothEntry = entryModel == ENTRY_BOTH
+int entryFromHour = input.int(10, "Entry From", minval = 0, maxval = 23, group = GRP_ENTRY, inline = "entryfrom",
+     tooltip = "No new order before this clock in Time Zone. The swing, the zone, a flip, and a continuation are still stored. 0:00 turns this check off. The default is 10:05. The structure window still starts at its own Start Time.")
+int entryFromMinute = input.int(5, "Minute", minval = 0, maxval = 59, group = GRP_ENTRY, inline = "entryfrom",
+     tooltip = "Minute of Entry From. 10 and 5 is 10:05. A bar at that minute is allowed. An earlier bar can still update structure.")
+float minRange = input.float(8, "Min Range", minval = 0, step = 0.25, group = GRP_ENTRY,
+     tooltip = "The last six chart bars, including this bar, have to span at least this many points. 0 turns the check off.")
+float longExtension = input.float(22, "Long Extension", minval = 0, step = 0.25, group = GRP_ENTRY,
+     tooltip = "A long is refused when its fill is more than this many points above the open of the first bar at or after 09:30 in Time Zone. 0 turns the check off. Shorts are not filtered. A refused long still updates structure.")
+float maxStop = input.float(30, "Max Stop", minval = 0, step = 0.25, group = GRP_ENTRY,
+     tooltip = "An order is refused when the distance from the fill to its stop is wider than this. 0 turns the check off. A taken trade keeps its own stop. This does not widen it.")
 
 string GRP_ORDERS = "Orders"
 int contracts = input.int(1, "Contracts", minval = 1, group = GRP_ORDERS,
      tooltip = "Fixed size for each order. Both can fill the market order and the swing limit, so both fills are two times this number. A market order is sent on the displacement candle and fills on that close. A limit is sent on the candle after the mark. A later candle that trades the stop before a limit fill cancels that limit. A market order is left to fill. An open trade keeps its own stop and target.")
+bool holdWinner = input.bool(true, "Hold Winner", group = GRP_ORDERS,
+     tooltip = "While the open trade is in profit at the previous close, a later signal does not close it and does not reverse it. A trade at a loss, or exactly at the entry, still closes on the next signal. The original stop and target stay.")
+bool sessionFlat = input.bool(true, "Flat At 15:55", group = GRP_ORDERS,
+     tooltip = "A trade opened before 15:55 in Time Zone, on that same calendar day, is closed on the first bar at or after 15:55. The entry bar is left alone. A fill at 15:55 or later is not flattened. A trade that is still open after midnight is not flattened the next day.")
 
 string targetPine = targetChoice == "Daily" ? "D" : targetChoice == "4H" ? "240" : targetChoice == "1H" ? "60" : targetChoice == "15M" ? "15" : targetChoice == "5M" ? "5" : targetChoice == "1M" ? "1" : timeframe.period
 bool targetTfOk = targetChoice == "Off" or timeframe.in_seconds(targetPine) >= timeframe.in_seconds()
@@ -226,16 +251,47 @@ f_closeMarket(int direction) =>
         strategy.close("1C Short", comment = "Unconfirmed")
     f_clearPending()
 
+// Entry checks read these. They stay outside the function so each bar has one value.
+// They are declared before the order functions. PyneCore does not hoist a later function.
+int entryFromMinuteOfDay = entryFromHour * 60 + entryFromMinute
+var float sessionOpen = na
+var int sessionDay = na
+int nyDay = year(time, timeZone) * 10000 + month(time, timeZone) * 100 + dayofmonth(time, timeZone)
+int nyMinute = hour(time, timeZone) * 60 + minute(time, timeZone)
+if nyMinute >= 9 * 60 + 30 and nyDay != sessionDay
+    sessionDay := nyDay
+    sessionOpen := open
+float windowSpan = ta.highest(high, 6) - ta.lowest(low, 6)
+
+f_entryOk(int direction, float entryPrice, float stopPrice) =>
+    bool timeOk = entryFromMinuteOfDay == 0 or nyMinute >= entryFromMinuteOfDay
+    bool rangeOk = minRange <= 0 or (not na(windowSpan) and windowSpan >= minRange)
+    bool longOk = longExtension <= 0 or direction != DIR_BULL or na(sessionOpen) or entryPrice - sessionOpen <= longExtension
+    bool riskOk = maxStop <= 0 or na(entryPrice) or na(stopPrice) or math.abs(entryPrice - stopPrice) <= maxStop
+    timeOk and rangeOk and longOk and riskOk
+
+f_holdingWinner() =>
+    bool longWin = strategy.position_size > 0 and close[1] > strategy.position_avg_price
+    bool shortWin = strategy.position_size < 0 and close[1] < strategy.position_avg_price
+    holdWinner and (longWin or shortWin)
+
+f_showOrderOk(Formation formation) =>
+    bool marketFill = marketEntry or formation.atClose
+    float entryPrice = marketFill ? close : formation.level
+    f_entryOk(formation.direction, entryPrice, formation.stopPrice)
+
 f_place(Formation formation) =>
     bool hasEntry = not na(formation.level) and not na(formation.stopPrice)
     bool stopOk = formation.direction == DIR_BULL ? formation.stopPrice < formation.level : formation.stopPrice > formation.level
     bool hasTarget = not na(formation.targetPrice)
     bool targetSide = formation.direction == DIR_BULL ? formation.targetPrice > formation.level : formation.targetPrice < formation.level
     bool targetOk = minRr > 0 ? hasTarget and targetSide : not hasTarget or targetSide
-    if strategy.position_size == 0 and hasEntry and stopOk and targetOk
+    bool useMarket = marketEntry or formation.atClose
+    float placedEntry = useMarket ? close : formation.level
+    bool placedOk = f_entryOk(formation.direction, placedEntry, formation.stopPrice)
+    if strategy.position_size == 0 and hasEntry and stopOk and targetOk and placedOk
         f_clearPending()
         array.set(pendingCreation, 0, formation.creationBar)
-        bool useMarket = marketEntry or formation.atClose
         if formation.direction == DIR_BULL
             if useMarket
                 strategy.entry("1C Long", strategy.long, qty = contracts)
@@ -261,7 +317,8 @@ f_placeSwing(Formation formation) =>
     bool targetSide = formation.direction == DIR_BULL ? formation.swingTarget > formation.swingLevel : formation.swingTarget < formation.swingLevel
     bool targetOk = minRr > 0 ? hasTarget and targetSide : not hasTarget or targetSide
     bool placed = false
-    if hasEntry and stopOk and targetOk
+    bool swingOk = f_entryOk(formation.direction, formation.swingLevel, formation.swingStop)
+    if hasEntry and stopOk and targetOk and swingOk
         if formation.direction == DIR_BULL
             strategy.entry("1C Long Limit", strategy.long, qty = contracts, limit = formation.swingLevel)
             f_protectSwing(formation)
@@ -406,41 +463,48 @@ f_store(Formation formation) =>
     stored
 
 f_show(Formation formation, bool placeOrder) =>
-    if displayMode == DISPLAY_LATEST
-        int count = array.size(formations)
-        if count > 0
-            for index = 0 to count - 1
-                Formation stored = array.get(formations, index)
-                if stored.isVisible
-                    f_deleteVisuals(stored)
-    f_render(formation)
-    if marketEntry or formation.atClose or formation.closeLines
-        formation.entryMitigated := true
+    bool orderOk = f_showOrderOk(formation)
+    bool holding = f_holdingWinner()
+    bool drawMark = not placeOrder or (strategy.position_size == 0 and orderOk) or (strategy.position_size != 0 and liquidityOn and not holding)
+    if drawMark
+        if displayMode == DISPLAY_LATEST
+            int count = array.size(formations)
+            if count > 0
+                for index = 0 to count - 1
+                    Formation stored = array.get(formations, index)
+                    if stored.isVisible
+                        f_deleteVisuals(stored)
+        f_render(formation)
+        if marketEntry or formation.atClose or formation.closeLines
+            formation.entryMitigated := true
     // A new mark while flat replaces the working order. While liquidity is on,
     // a new mark closes the open trade. The mark is the sweep validated by this
     // formation, so the sweep candle itself does not close the trade. The new
     // mark does not send an order while that close is still working. A market
     // order sent on the displacement candle is already filled, so that confirm
-    // draws here and leaves the position open.
+    // draws here and leaves the position open. A refused entry is not drawn.
+    // A winner is left open.
     if placeOrder
         if strategy.position_size == 0
-            if marketEntry or formation.atClose
-                f_place(formation)
-                formation.limitWaiting := false
-            else
-                f_clearPending()
-                formation.limitWaiting := true
+            if orderOk
+                if marketEntry or formation.atClose
+                    f_place(formation)
+                    formation.limitWaiting := false
+                else
+                    f_clearPending()
+                    formation.limitWaiting := true
         else if liquidityOn
-            if strategy.position_size > 0
-                strategy.close("1C Long", comment = "Formation")
-                strategy.close("1C Long Limit", comment = "Formation")
-            else
-                strategy.close("1C Short", comment = "Formation")
-                strategy.close("1C Short Limit", comment = "Formation")
-            strategy.cancel("1C Long Limit")
-            strategy.cancel("1C Short Limit")
-            formation.limitWaiting := false
-            formation.swingLimitWaiting := false
+            if not holding
+                if strategy.position_size > 0
+                    strategy.close("1C Long", comment = "Formation")
+                    strategy.close("1C Long Limit", comment = "Formation")
+                else
+                    strategy.close("1C Short", comment = "Formation")
+                    strategy.close("1C Short Limit", comment = "Formation")
+                strategy.cancel("1C Long Limit")
+                strategy.cancel("1C Short Limit")
+                formation.limitWaiting := false
+                formation.swingLimitWaiting := false
 
 // Closed target-timeframe candles. A pivot needs Target Swing Length bars on
 // each side, so it is stored only after those later candles have closed.
@@ -1055,7 +1119,7 @@ if barstate.isconfirmed and not sundaySkipped and array.size(formations) > 0
                 f_store(flipFormation)
             else if f_store(flipFormation)
                 if bothEntry and strategy.position_size == 0
-                    if marketLeg
+                    if marketLeg and f_entryOk(flipDirection, bothClose, bothOpen)
                         f_clearPending()
                         if flipDirection == DIR_BULL
                             strategy.entry("1C Long", strategy.long, qty = contracts)
@@ -1106,10 +1170,11 @@ if barstate.isconfirmed and not sundaySkipped and not flippedThisBar and not for
             postFormation.sweepBar := postBull ? firstBullSweepBar : firstBearSweepBar
             postFormation.sweepPrice := postBull ? firstBullSweepPrice : firstBearSweepPrice
             if f_store(postFormation)
-                f_clearPending()
                 bool postFlat = strategy.position_size == 0
                 bool postAgainst = postBull ? strategy.position_size < 0 : strategy.position_size > 0
-                if postFlat or postAgainst
+                bool postTake = (postFlat or postAgainst) and not (postAgainst and f_holdingWinner()) and f_entryOk(postDir, postClose, postOpen)
+                if postTake
+                    f_clearPending()
                     if postBull
                         strategy.entry("1C Long", strategy.long, qty = contracts)
                         postFormation.protectWaiting := true
@@ -1117,8 +1182,8 @@ if barstate.isconfirmed and not sundaySkipped and not flippedThisBar and not for
                         strategy.entry("1C Short", strategy.short, qty = contracts)
                         postFormation.protectWaiting := true
                     array.set(pendingCreation, 0, postFormation.creationBar)
-                f_show(postFormation, false)
-                f_labelFirstSweep(postFormation)
+                    f_show(postFormation, false)
+                    f_labelFirstSweep(postFormation)
                 formedThisBar := true
 
 if not sundaySkipped and not flippedThisBar and bullishBreakNow and f_inWindow()
@@ -1166,7 +1231,7 @@ if not sundaySkipped and not flippedThisBar and bullishBreakNow and f_inWindow()
             armedTargetTime := bullArmAnchor
             armedUnder := bullArmUnder
             // The fill is this candle's close. The next candle attaches the stop when the gap confirms.
-            if not bullArmTooClose and strategy.position_size == 0
+            if not bullArmTooClose and strategy.position_size == 0 and f_entryOk(DIR_BULL, close, open)
                 f_clearPending()
                 strategy.entry("1C Long", strategy.long, qty = contracts)
                 marketOrderLive := true
@@ -1219,7 +1284,7 @@ if not sundaySkipped and not flippedThisBar and bearishBreakNow and f_inWindow()
             armedTarget := bearArmTarget
             armedTargetTime := bearArmAnchor
             armedUnder := bearArmUnder
-            if not bearArmTooClose and strategy.position_size == 0
+            if not bearArmTooClose and strategy.position_size == 0 and f_entryOk(DIR_BEAR, close, open)
                 f_clearPending()
                 strategy.entry("1C Short", strategy.short, qty = contracts)
                 marketOrderLive := true
@@ -1324,3 +1389,22 @@ if barstate.isconfirmed and formationCount > 0
                     formation.entryMitigated := true
                     if formation.creationBar == array.get(pendingCreation, 0)
                         array.set(pendingCreation, 0, na)
+
+// A same-session trade opened before 15:55 is closed on the first bar at or after 15:55.
+// The entry bar is skipped. A fill at 15:55 or later is not flattened, and neither is a trade held past midnight.
+bool sessionFlatDue = false
+if sessionFlat and strategy.position_size != 0 and strategy.opentrades > 0
+    int flatEntryTime = strategy.opentrades.entry_time(0)
+    int flatEntryDay = year(flatEntryTime, timeZone) * 10000 + month(flatEntryTime, timeZone) * 100 + dayofmonth(flatEntryTime, timeZone)
+    int flatBarDay = year(time, timeZone) * 10000 + month(time, timeZone) * 100 + dayofmonth(time, timeZone)
+    int flatEntryMinute = hour(flatEntryTime, timeZone) * 60 + minute(flatEntryTime, timeZone)
+    int flatBarMinute = hour(time, timeZone) * 60 + minute(time, timeZone)
+    bool flatSame = flatEntryDay == flatBarDay and flatEntryMinute < 15 * 60 + 55
+    bool flatClock = flatBarMinute >= 15 * 60 + 55
+    bool flatLive = bar_index > strategy.opentrades.entry_bar_index(0)
+    sessionFlatDue := flatSame and flatClock and flatLive
+if sessionFlatDue
+    strategy.close("1C Long", comment = "session")
+    strategy.close("1C Short", comment = "session")
+    strategy.close("1C Long Limit", comment = "session")
+    strategy.close("1C Short Limit", comment = "session")
