@@ -1,0 +1,1092 @@
+//@version=6
+indicator("Single Candle OB + MSS + FVG", shorttitle = "1C Impulse", overlay = true,
+     max_bars_back = 500, max_boxes_count = 200, max_lines_count = 500, max_labels_count = 100)
+
+// The highlighted candle is the one that closes through the swing. The next
+// candle confirms it when that swing is left strictly inside the body fair value
+// gap between the previous candle and the confirming candle. Wicks may overlap
+// that gap. The confirming candle's color does not matter. The box then covers
+// only the break candle, with a dotted line at its midpoint. A wick that only
+// tags the swing does not qualify. The swing is booked on that close even when
+// the next candle does not leave it inside the gap. Limit at the swing draws
+// the entry on the breached swing and extends the stop, the entry, and the
+// target until a later candle trades that price. Its stop is the previous
+// candle's low for a bullish signal and that candle's high for a bearish one.
+// Market at close draws the entry on the close of the displacement candle.
+// The next candle confirms the gap and does not set that price. The stop is
+// the open of that same candle. Both draws that close and the swing limit
+// on the same mark. Each leg keeps its own Min RR. The lines stay on the
+// signal. A stop traded after the drawing candle hides the mark.
+
+string GRP_COLORS = "Colors"
+color bullObColor = input.color(color.rgb(30, 136, 229), "Bullish Displacement", group = GRP_COLORS)
+color bearObColor = input.color(color.rgb(229, 57, 53), "Bearish Displacement", group = GRP_COLORS)
+
+string GRP_STRUCTURE = "Structure"
+int swingLength = input.int(1, "Swing Length", minval = 1, maxval = 50, group = GRP_STRUCTURE,
+     tooltip = "Pivots become usable only after this many right-side bars have closed. 1 is the nearest one-candle swing. Raise it for a larger swing.")
+int swingBreachLookback = input.int(2, "Swing Breach Lookback", minval = 0, maxval = 50, group = GRP_STRUCTURE,
+     tooltip = "The marked candle is the one that closes through the swing. This is how many candles an unclaimed close-through stays open before it is booked. 0 books it on the break candle. A larger number waits until that window ends. The mark still needs the next candle to leave the swing inside a body fair value gap. A wick that never closes through does not book the swing.")
+
+string GRP_DISPLAY = "Display"
+const string DISPLAY_LATEST = "Latest"
+const string DISPLAY_ALL = "All"
+string displayMode = input.string(DISPLAY_LATEST, "Display Mode",
+     options = [DISPLAY_LATEST, DISPLAY_ALL], group = GRP_DISPLAY)
+
+string GRP_TARGET = "Target"
+string targetChoice = input.string("1H", "Timeframe Target", options = ["Off", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_TARGET,
+     tooltip = "Take profit is the newest confirmed swing on this timeframe beyond the entry. A bullish signal uses a swing high above that entry. A bearish signal uses a swing low below it. A wick through the swing does not skip it. Limit at the swing puts the stop on the previous candle's low for a bullish signal and on its high for a bearish signal. That distance starts at the breached swing. Market at close puts the stop on the open of the displacement candle and measures the distance from that candle's close. When no target swing is beyond the entry, the target is two times that distance. Off does not use a swing. Max Target then sets the target, and 0 leaves it empty. Min RR checks the final target: the swing, that two-times fallback, or the Max Target cap. Equal to the multiple still marks. Min RR above 0 leaves the candle unmarked when the final target is closer than that multiple. A flip uses the same multiple. A timeframe below the chart leaves the swing target off. Min RR above 0 then leaves the candle unmarked.")
+int minRr = input.int(2, "Min RR", minval = 0, maxval = 50, group = GRP_TARGET,
+     tooltip = "The candle is not marked when the final target is closer than this multiple of the stop distance. Limit at the swing measures that distance from the breached swing to the previous candle. Market at close measures it from the close of the displacement candle to the open of that same candle. The final target is the higher-timeframe swing, the two-times fallback when no swing is beyond the entry, or the Max Target cap when that cap is closer. A flip uses the same multiple. Equal to the multiple still marks. 0 turns this check off. The break is still booked. The default is 2.")
+int maxTarget = input.int(14, "Max Target", minval = 0, maxval = 50, group = GRP_TARGET,
+     tooltip = "When Timeframe Target is Off, the target is this multiple of the distance from the breached swing to the stop. 3 draws it at 1:3, and 0 leaves the target empty. When a swing timeframe is selected, this caps a swing farther than this multiple. A closer swing stays. 0 leaves that swing unchanged. The two-times fallback stays at two times. Min RR can leave that fallback unmarked when two is below the multiple.")
+int targetSwingLength = input.int(6, "Target Swing Length", minval = 1, maxval = 20, group = GRP_TARGET,
+     tooltip = "Bars required on each side of a target-timeframe pivot. The pivot is usable only after that many later candles have closed.")
+
+string GRP_LIQUIDITY = "Liquidity"
+string liquidityChoice = input.string("4H", "Liquidity Timeframe", options = ["Off", "Same", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_LIQUIDITY,
+     tooltip = "The mark waits for a chart candle that sweeps this timeframe and closes back inside. Same uses Timeframe Target. The pool is the last closed candle on that timeframe. A bullish sweep trades below that candle's low and the close finishes back inside it. A bearish sweep trades above that candle's high and the close finishes back inside it. Off leaves this filter out. A timeframe below the chart leaves it out. The break is still booked. A later close through the swept side invalidates that sweep before the mark. A wick through that side does not. The next sweep of that side starts again. A continuation follows that close. The breaching candle is swept, then a later candle closes through that sweep. The entry is that candle's close and the stop is its open.")
+string keyLevelChoice = input.string("Daily", "Key Level", options = ["Off", "Same", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_LIQUIDITY,
+     tooltip = "Off leaves the mark on Liquidity Timeframe alone. Any other choice starts when an untapped high or low of this timeframe is swept or closed through. A chart candle then has to close back inside that candle's range. Liquidity Lookback counts the bars after that close. The liquidity sweep can be older and stays valid until a close through its side. Same uses Timeframe Target. A timeframe below the chart leaves this out. With this set and Liquidity Timeframe off, nothing is marked.")
+int liquidityLookback = input.int(1, "Liquidity Lookback", minval = 0, maxval = 500, group = GRP_LIQUIDITY,
+     tooltip = "Chart candles. 1 keeps a liquidity sweep on this candle or the candle before it. 0 allows only a sweep on the signal candle. On a 15-minute chart, 1 is 15 minutes. A flip uses this count. With Key Level on, the count starts when a chart candle closes back inside the key range. The liquidity sweep can be older.")
+bool useVwapChase = input.bool(false, "VWAP Chase", group = GRP_LIQUIDITY,
+     tooltip = "On skips a continuation that has already run too far past the session VWAP. Off keeps every continuation. Swing breaks and flips are not filtered. The VWAP is the chart session VWAP.")
+float vwapChase = input.float(4, "VWAP Chase R", minval = 0, step = 0.25, group = GRP_LIQUIDITY,
+     tooltip = "Stop distances past the session VWAP. 4 skips a continuation whose close is more than four times its open-to-close distance beyond VWAP. A bullish continuation is measured above VWAP. A bearish continuation is measured below it. A continuation on the other side of VWAP is kept. Equal to the multiple still marks. 0 skips any continuation that has closed past VWAP. The checkbox turns the filter off.")
+
+string GRP_TIME = "Time Window"
+bool useTimeWindow = input.bool(true, "Use Time Window", group = GRP_TIME)
+int startHour = input.int(9, "Start Time", minval = 0, maxval = 23, group = GRP_TIME, inline = "start")
+int startMinute = input.int(0, "Minute", minval = 0, maxval = 59, group = GRP_TIME, inline = "start")
+int endHour = input.int(16, "End Time", minval = 0, maxval = 23, group = GRP_TIME, inline = "end")
+int endMinute = input.int(0, "Minute", minval = 0, maxval = 59, group = GRP_TIME, inline = "end")
+int minuteWindowStart = input.int(1, "Minute Window", minval = 0, maxval = 59, group = GRP_TIME, inline = "minute",
+     tooltip = "Used only while Use Time Window is on. 1 to 55 keeps :15, :30, and :45 on a 15-minute chart and drops the :00 candle. 0 to 60 keeps the whole hour.")
+int minuteWindowEnd = input.int(55, "to", minval = 1, maxval = 60, group = GRP_TIME, inline = "minute",
+     tooltip = "Exclusive end minute in the same hour. 15 excludes the candle that opens at minute 15. 60 includes the full hour.")
+string timeZone = input.string("America/New_York", "Time Zone", group = GRP_TIME,
+     tooltip = "Use an IANA timezone. America/New_York follows US daylight-saving transitions.")
+bool skipSundays = input.bool(false, "Skip Sundays", group = GRP_TIME,
+     tooltip = "A Sunday candle does not arm a displacement, does not book a swing, and does not flip a mark. The candle after the break that falls on Sunday does not confirm the gap. An open trade keeps its stop and target. Higher-timeframe swings still include Sunday prices.")
+
+string GRP_ENTRY = "Entry"
+const string ENTRY_LIMIT = "Limit at the swing"
+const string ENTRY_MARKET = "Market at close"
+const string ENTRY_BOTH = "Both"
+string entryModel = input.string(ENTRY_LIMIT, "Entry Model",
+     options = [ENTRY_LIMIT, ENTRY_MARKET, ENTRY_BOTH], group = GRP_ENTRY,
+     tooltip = "Limit at the swing draws the black line on the breached swing. Its stop is the previous candle's low for a bullish signal and that candle's high for a bearish signal. Market at close draws the entry on the close of the displacement candle. For a swing break that is the candle that closed through the swing. The next candle confirms the gap and does not set the price. For a flip the displacement candle is the flip candle. The stop is the open of that same candle. The target and Min RR are measured from that close to that open. A close that does not clear Min RR is left unmarked. Both draws that close and that swing on the same mark. Each leg keeps its own Min RR. A leg that misses it is left off. The market lines can show when the confirming candle is outside the window. The swing lines are added only when that candle is inside the window. The lines stay on the signal candles.")
+bool marketEntry = entryModel == ENTRY_MARKET
+bool bothEntry = entryModel == ENTRY_BOTH
+
+string targetPine = targetChoice == "Daily" ? "D" : targetChoice == "4H" ? "240" : targetChoice == "1H" ? "60" : targetChoice == "15M" ? "15" : targetChoice == "5M" ? "5" : targetChoice == "1M" ? "1" : timeframe.period
+bool targetTfOk = targetChoice == "Off" or timeframe.in_seconds(targetPine) >= timeframe.in_seconds()
+bool swingTargetOn = targetChoice != "Off" and targetTfOk
+bool targetOn = swingTargetOn or maxTarget > 0
+string safeTargetPine = swingTargetOn ? targetPine : timeframe.period
+string liquiditySelected = liquidityChoice == "Same" ? targetChoice : liquidityChoice
+string liquidityPine = liquiditySelected == "Daily" ? "D" : liquiditySelected == "4H" ? "240" : liquiditySelected == "1H" ? "60" : liquiditySelected == "15M" ? "15" : liquiditySelected == "5M" ? "5" : liquiditySelected == "1M" ? "1" : timeframe.period
+bool liquidityTfOk = liquiditySelected != "Off" and timeframe.in_seconds(liquidityPine) >= timeframe.in_seconds()
+bool liquidityOn = liquidityChoice != "Off" and liquidityTfOk
+string safeLiquidityPine = liquidityOn ? liquidityPine : timeframe.period
+
+if barstate.isfirst and useTimeWindow and minuteWindowStart >= minuteWindowEnd
+    runtime.error("Minute window end must be later than the minute window start.")
+
+const int MAX_STORED = 100
+const int DIR_BULL = 1
+const int DIR_BEAR = -1
+const int KIND_MSS = 1
+const int KIND_BOS = 2
+
+type Formation
+    int direction
+    int kind
+    int creationBar
+    int swingBar
+    float level
+    int obBar
+    float obTop
+    float obBottom
+    int fvgLeftBar
+    int fvgRightBar
+    float fvgTop
+    float fvgBottom
+    bool obMitigated
+    bool fvgMitigated
+    bool isVisible
+    float impulseHigh
+    float impulseLow
+    float stopPrice
+    float targetPrice
+    int signalTime
+    int targetAnchorTime
+    bool underMinRr
+    bool flipped
+    box obBox
+    box fvgBox
+    line levelLine
+    label levelLabel
+    line stopLine
+    line targetLine
+    line entryLine
+    int entryDrawnBar = na
+    bool entryMitigated = false
+    int sweepBar = na
+    float sweepPrice = na
+    bool atClose = false
+    float opposingSwing = na
+    bool closeLines = false
+    float swingLevel = na
+    float swingStop = na
+    float swingTarget = na
+    line swingEntryLine = na
+    line swingStopLine = na
+    line swingTargetLine = na
+    bool swingEntryMitigated = false
+    line sweepLine = na
+    label sweepTag = na
+    line keySweepLine = na
+    label keySweepTag = na
+
+var array<Formation> formations = array.new<Formation>()
+var int structureDirection = 0
+
+f_inWindowAt(int t) =>
+    if not useTimeWindow
+        true
+    else
+        int barMinutes = hour(t, timeZone) * 60 + minute(t, timeZone)
+        int startMinutes = startHour * 60 + startMinute
+        int endMinutes = endHour * 60 + endMinute
+        bool inside = startMinutes < endMinutes ?
+             (barMinutes >= startMinutes and barMinutes < endMinutes) :
+             startMinutes > endMinutes ?
+             (barMinutes >= startMinutes or barMinutes < endMinutes) : true
+        int minuteOfHour = minute(t, timeZone)
+        bool minuteInside = minuteOfHour >= minuteWindowStart and minuteOfHour < minuteWindowEnd
+        inside and minuteInside
+
+f_inWindow() =>
+    f_inWindowAt(time)
+
+f_touched(float zoneTop, float zoneBottom) =>
+    high >= zoneBottom and low <= zoneTop
+
+var label[] sweepLabels = array.new<label>()
+var line[] sweepLines = array.new<line>()
+var int[] sweepLabelBars = array.new<int>()
+var int[] sweepLabelSides = array.new<int>()
+var int[] sweepLabelKinds = array.new<int>()
+
+f_releaseMark(line markLine, label markLabel) =>
+    if not na(markLabel)
+        int count = array.size(sweepLabels)
+        if count > 0
+            for index = 0 to count - 1
+                if array.get(sweepLabels, index) == markLabel
+                    array.remove(sweepLabels, index)
+                    array.remove(sweepLines, index)
+                    array.remove(sweepLabelBars, index)
+                    array.remove(sweepLabelSides, index)
+                    array.remove(sweepLabelKinds, index)
+                    break
+        label.delete(markLabel)
+    if not na(markLine)
+        line.delete(markLine)
+
+f_deleteVisuals(Formation formation) =>
+    if formation.isVisible
+        box.delete(formation.obBox)
+        box.delete(formation.fvgBox)
+        line.delete(formation.levelLine)
+        label.delete(formation.levelLabel)
+        line.delete(formation.stopLine)
+        line.delete(formation.targetLine)
+        line.delete(formation.entryLine)
+        line.delete(formation.swingEntryLine)
+        line.delete(formation.swingStopLine)
+        line.delete(formation.swingTargetLine)
+        f_releaseMark(formation.sweepLine, formation.sweepTag)
+        f_releaseMark(formation.keySweepLine, formation.keySweepTag)
+        formation.obBox := na
+        formation.fvgBox := na
+        formation.levelLine := na
+        formation.levelLabel := na
+        formation.stopLine := na
+        formation.targetLine := na
+        formation.entryLine := na
+        formation.swingEntryLine := na
+        formation.swingStopLine := na
+        formation.swingTargetLine := na
+        formation.sweepLine := na
+        formation.sweepTag := na
+        formation.keySweepLine := na
+        formation.keySweepTag := na
+        formation.isVisible := false
+
+f_reclaimIndex() =>
+    int result = -1
+    int count = array.size(formations)
+    if count > 0
+        for index = 0 to count - 1
+            Formation formation = array.get(formations, index)
+            if result == -1 and formation.obMitigated and formation.fvgMitigated
+                result := index
+    result
+
+f_render(Formation formation) =>
+    color candleColor = formation.direction == DIR_BULL ? bullObColor : bearObColor
+    float midpoint = (formation.impulseHigh + formation.impulseLow) / 2
+    formation.obBox := box.new(formation.creationBar, formation.impulseHigh, formation.creationBar + 1,
+         formation.impulseLow, xloc = xloc.bar_index, border_color = candleColor,
+         bgcolor = color.new(candleColor, 82))
+    formation.levelLine := line.new(formation.creationBar, midpoint, formation.creationBar + 1, midpoint,
+         xloc = xloc.bar_index, color = candleColor, style = line.style_dotted, width = 1)
+    // Limit at the swing draws the stop from the previous candle. Market at close draws it on the displacement candle, at that candle's open.
+    bool closeAnchor = marketEntry or formation.atClose or formation.closeLines
+    if closeAnchor
+        formation.stopLine := line.new(formation.creationBar, formation.stopPrice, formation.creationBar + 1,
+             formation.stopPrice, xloc = xloc.bar_index, color = color.red, width = 2)
+    else
+        formation.stopLine := line.new(formation.creationBar - 1, formation.stopPrice, formation.creationBar + 1,
+             formation.stopPrice, xloc = xloc.bar_index, color = color.red, width = 2)
+    // The entry is the breached swing, or the close of the displacement candle.
+    if not na(formation.level)
+        if closeAnchor
+            formation.entryLine := line.new(formation.creationBar, formation.level, formation.creationBar + 1,
+                 formation.level, xloc = xloc.bar_index, color = color.black, width = 2)
+        else
+            formation.entryLine := line.new(formation.creationBar - 1, formation.level, formation.creationBar + 1,
+                 formation.level, xloc = xloc.bar_index, color = color.black, width = 2)
+    formation.entryDrawnBar := bar_index
+    if not na(formation.targetPrice)
+        formation.targetLine := line.new(formation.creationBar, formation.targetPrice, formation.creationBar + 1,
+             formation.targetPrice, xloc = xloc.bar_index, color = color.green, width = 1)
+    if not na(formation.swingLevel) and not na(formation.swingStop)
+        formation.swingStopLine := line.new(formation.creationBar - 1, formation.swingStop, formation.creationBar + 1,
+             formation.swingStop, xloc = xloc.bar_index, color = color.red, width = 2)
+        formation.swingEntryLine := line.new(formation.creationBar - 1, formation.swingLevel, formation.creationBar + 1,
+             formation.swingLevel, xloc = xloc.bar_index, color = color.black, width = 2)
+        if not na(formation.swingTarget)
+            formation.swingTargetLine := line.new(formation.creationBar, formation.swingTarget, formation.creationBar + 1,
+                 formation.swingTarget, xloc = xloc.bar_index, color = color.green, width = 1)
+    formation.isVisible := true
+
+f_store(Formation formation) =>
+    bool stored = false
+    if array.size(formations) >= MAX_STORED
+        int reclaimIndex = f_reclaimIndex()
+        if reclaimIndex >= 0
+            Formation reclaimed = array.remove(formations, reclaimIndex)
+            f_deleteVisuals(reclaimed)
+    if array.size(formations) < MAX_STORED
+        array.push(formations, formation)
+        stored := true
+    stored
+
+f_show(Formation formation) =>
+    if displayMode == DISPLAY_LATEST
+        int count = array.size(formations)
+        if count > 0
+            for index = 0 to count - 1
+                Formation stored = array.get(formations, index)
+                if stored.isVisible
+                    f_deleteVisuals(stored)
+    f_render(formation)
+    if marketEntry or formation.atClose or formation.closeLines
+        formation.entryMitigated := true
+
+// Closed target-timeframe candles. A pivot needs Target Swing Length bars on
+// each side, so it is stored only after those later candles have closed.
+[closedTargetTime, closedTargetHigh, closedTargetLow] = request.security(
+     syminfo.tickerid, safeTargetPine, [time[1], high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+var float[] targetHighs = array.new<float>()
+var float[] targetLows = array.new<float>()
+var int[] targetTimes = array.new<int>()
+var float[] targetSwingPrices = array.new<float>()
+var int[] targetSwingKinds = array.new<int>()
+var int[] targetSwingTimes = array.new<int>()
+var int lastTargetTime = na
+int targetPivotWindow = targetSwingLength * 2 + 1
+
+if swingTargetOn and not na(closedTargetTime) and (na(lastTargetTime) or closedTargetTime != lastTargetTime)
+    lastTargetTime := closedTargetTime
+    array.push(targetHighs, closedTargetHigh)
+    array.push(targetLows, closedTargetLow)
+    array.push(targetTimes, closedTargetTime)
+    if array.size(targetHighs) > targetPivotWindow
+        array.shift(targetHighs)
+        array.shift(targetLows)
+        array.shift(targetTimes)
+    if array.size(targetHighs) == targetPivotWindow
+        float targetPivotHigh = array.get(targetHighs, targetSwingLength)
+        float targetPivotLow = array.get(targetLows, targetSwingLength)
+        bool isTargetHigh = true
+        bool isTargetLow = true
+        for pivotIndex = 0 to targetPivotWindow - 1
+            if pivotIndex != targetSwingLength
+                if array.get(targetHighs, pivotIndex) >= targetPivotHigh
+                    isTargetHigh := false
+                if array.get(targetLows, pivotIndex) <= targetPivotLow
+                    isTargetLow := false
+        int targetPivotTime = array.get(targetTimes, targetSwingLength)
+        if isTargetHigh
+            array.push(targetSwingPrices, targetPivotHigh)
+            array.push(targetSwingKinds, 1)
+            array.push(targetSwingTimes, targetPivotTime)
+        if isTargetLow
+            array.push(targetSwingPrices, targetPivotLow)
+            array.push(targetSwingKinds, -1)
+            array.push(targetSwingTimes, targetPivotTime)
+        while array.size(targetSwingPrices) > 50
+            array.shift(targetSwingPrices)
+            array.shift(targetSwingKinds)
+            array.shift(targetSwingTimes)
+
+// The pool is the last closed liquidity-timeframe candle. A chart candle sweeps
+// it by trading beyond one side and closing back inside that candle. Later taps
+// of that same candle keep the first tap as the label anchor. A later close
+// through the swept side invalidates that sweep before the mark. A wick does not.
+[closedLiqTime, closedLiqHigh, closedLiqLow] = request.security(
+     syminfo.tickerid, safeLiquidityPine, [time[1], high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+var int lastBullSweepBar = na
+var int lastBearSweepBar = na
+var float lastBullSweepPrice = na
+var float lastBearSweepPrice = na
+var int bullSweepCandle = na
+var int bearSweepCandle = na
+var int firstBullSweepBar = na
+var int firstBearSweepBar = na
+var float firstBullSweepPrice = na
+var float firstBearSweepPrice = na
+var float bullSweepLevel = na
+var float bearSweepLevel = na
+var bool bullSweepValid = false
+var bool bearSweepValid = false
+var int bullBreachBar = na
+var float bullBreachHigh = na
+var float bullBreachLow = na
+var bool bullBreachSwept = false
+var int bearBreachBar = na
+var float bearBreachHigh = na
+var float bearBreachLow = na
+var bool bearBreachSwept = false
+var int continuationDir = 0
+var int bullContSweepBar = na
+var float bullContSweepPrice = na
+var int bearContSweepBar = na
+var float bearContSweepPrice = na
+if barstate.isconfirmed and liquidityOn and not na(closedLiqTime) and not na(closedLiqHigh) and not na(closedLiqLow) and closedLiqHigh > closedLiqLow
+    bool sweptLow = low < closedLiqLow and close > closedLiqLow and close < closedLiqHigh
+    bool sweptHigh = high > closedLiqHigh and close < closedLiqHigh and close > closedLiqLow
+    if sweptLow
+        lastBullSweepBar := bar_index
+        lastBullSweepPrice := low
+        bullSweepLevel := closedLiqLow
+        bullSweepValid := true
+        if na(bullSweepCandle) or bullSweepCandle != closedLiqTime
+            bullSweepCandle := closedLiqTime
+            firstBullSweepBar := bar_index
+            firstBullSweepPrice := low
+    if sweptHigh
+        lastBearSweepBar := bar_index
+        lastBearSweepPrice := high
+        bearSweepLevel := closedLiqHigh
+        bearSweepValid := true
+        if na(bearSweepCandle) or bearSweepCandle != closedLiqTime
+            bearSweepCandle := closedLiqTime
+            firstBearSweepBar := bar_index
+            firstBearSweepPrice := high
+    // The sweep candle closed back inside. A later close through that side,
+    // before the mark, drops the sweep and starts a continuation. The breaching
+    // candle is swept, then a later candle closes through that sweep.
+    continuationDir := 0
+    if not na(bullBreachBar) and bar_index != bullBreachBar
+        bool sweptBreach = high > bullBreachHigh and close < bullBreachHigh and close > bullBreachLow
+        bool closedBreach = close > bullBreachHigh
+        if not bullBreachSwept and sweptBreach
+            bullBreachSwept := true
+            bullContSweepBar := bar_index
+            bullContSweepPrice := high
+        else if bullBreachSwept and closedBreach
+            continuationDir := DIR_BULL
+            bullBreachBar := na
+            bullBreachSwept := false
+        else if closedBreach
+            bullBreachBar := bar_index
+            bullBreachHigh := high
+            bullBreachLow := low
+            bullBreachSwept := false
+        else if close < bullBreachLow
+            bullBreachBar := na
+            bullBreachSwept := false
+    if not na(bearBreachBar) and bar_index != bearBreachBar
+        bool sweptBearBreach = low < bearBreachLow and close > bearBreachLow and close < bearBreachHigh
+        bool closedBearBreach = close < bearBreachLow
+        if not bearBreachSwept and sweptBearBreach
+            bearBreachSwept := true
+            bearContSweepBar := bar_index
+            bearContSweepPrice := low
+        else if bearBreachSwept and closedBearBreach
+            continuationDir := DIR_BEAR
+            bearBreachBar := na
+            bearBreachSwept := false
+        else if closedBearBreach
+            bearBreachBar := bar_index
+            bearBreachHigh := high
+            bearBreachLow := low
+            bearBreachSwept := false
+        else if close > bearBreachHigh
+            bearBreachBar := na
+            bearBreachSwept := false
+    if bullSweepValid and not na(lastBullSweepBar) and bar_index != lastBullSweepBar and close < bullSweepLevel
+        bearBreachBar := bar_index
+        bearBreachHigh := high
+        bearBreachLow := low
+        bearBreachSwept := false
+        bullSweepValid := false
+        bullSweepCandle := na
+        firstBullSweepBar := na
+        firstBullSweepPrice := na
+    if bearSweepValid and not na(lastBearSweepBar) and bar_index != lastBearSweepBar and close > bearSweepLevel
+        bullBreachBar := bar_index
+        bullBreachHigh := high
+        bullBreachLow := low
+        bullBreachSwept := false
+        bearSweepValid := false
+        bearSweepCandle := na
+        firstBearSweepBar := na
+        firstBearSweepPrice := na
+
+// Key Level starts on an untapped side of the last closed key candle. A sweep
+// or a close through that side opens the watch. A later chart candle has to
+// close back inside that candle's range. Liquidity Lookback counts from that
+// close. The liquidity sweep can be older. One side of a key candle arms once,
+// and a later close through the same side opens the watch again.
+string keySelected = keyLevelChoice == "Same" ? targetChoice : keyLevelChoice
+string keyPine = keySelected == "Daily" ? "D" : keySelected == "4H" ? "240" : keySelected == "1H" ? "60" : keySelected == "15M" ? "15" : keySelected == "5M" ? "5" : keySelected == "1M" ? "1" : timeframe.period
+bool keyTfOk = keySelected != "Off" and timeframe.in_seconds(keyPine) >= timeframe.in_seconds()
+bool keyLevelOn = keyLevelChoice != "Off" and keyTfOk
+string safeKeyPine = keyLevelOn ? keyPine : timeframe.period
+[closedKeyTime, closedKeyHigh, closedKeyLow] = request.security(
+     syminfo.tickerid, safeKeyPine, [time[1], high[1], low[1]], lookahead = barmerge.lookahead_on)
+var int keyCandleTime = na
+var bool keyBullUntapped = true
+var bool keyBearUntapped = true
+var bool keyBullTapped = false
+var bool keyBearTapped = false
+var float keyBullRangeHigh = na
+var float keyBullRangeLow = na
+var float keyBearRangeHigh = na
+var float keyBearRangeLow = na
+var int lastKeyBullBar = na
+var int lastKeyBearBar = na
+var bool keyBullValid = false
+var bool keyBearValid = false
+if barstate.isconfirmed and keyLevelOn and not na(closedKeyTime) and not na(closedKeyHigh) and not na(closedKeyLow) and closedKeyHigh > closedKeyLow
+    if na(keyCandleTime) or closedKeyTime != keyCandleTime
+        keyCandleTime := closedKeyTime
+        keyBullUntapped := true
+        keyBearUntapped := true
+    bool sweptOrTraversedLow = low < closedKeyLow or close < closedKeyLow
+    bool sweptOrTraversedHigh = high > closedKeyHigh or close > closedKeyHigh
+    if keyBullUntapped and sweptOrTraversedLow
+        keyBullUntapped := false
+        keyBullTapped := true
+        keyBullRangeHigh := closedKeyHigh
+        keyBullRangeLow := closedKeyLow
+        keyBullValid := false
+        lastKeyBullBar := na
+    if keyBearUntapped and sweptOrTraversedHigh
+        keyBearUntapped := false
+        keyBearTapped := true
+        keyBearRangeHigh := closedKeyHigh
+        keyBearRangeLow := closedKeyLow
+        keyBearValid := false
+        lastKeyBearBar := na
+    if keyBullTapped and not keyBullValid and close <= keyBullRangeHigh and close >= keyBullRangeLow
+        keyBullValid := true
+        lastKeyBullBar := bar_index
+        keyBullTapped := false
+    if keyBearTapped and not keyBearValid and close <= keyBearRangeHigh and close >= keyBearRangeLow
+        keyBearValid := true
+        lastKeyBearBar := bar_index
+        keyBearTapped := false
+    if keyBullValid and not na(lastKeyBullBar) and bar_index != lastKeyBullBar and close < keyBullRangeLow
+        keyBullValid := false
+        keyBullTapped := true
+        lastKeyBullBar := na
+    if keyBearValid and not na(lastKeyBearBar) and bar_index != lastKeyBearBar and close > keyBearRangeHigh
+        keyBearValid := false
+        keyBearTapped := true
+        lastKeyBearBar := na
+
+f_keyOk(bool bullish) =>
+    bool allowed = true
+    if keyLevelOn
+        int keyBar = bullish ? lastKeyBullBar : lastKeyBearBar
+        bool keyValid = bullish ? keyBullValid : keyBearValid
+        allowed := liquidityOn and keyValid and not na(keyBar) and bar_index - keyBar <= liquidityLookback
+    allowed
+
+f_liquidityOk(bool bullish) =>
+    bool allowed = true
+    if liquidityOn
+        int sweepBar = bullish ? lastBullSweepBar : lastBearSweepBar
+        bool sweepValid = bullish ? bullSweepValid : bearSweepValid
+        if keyLevelOn
+            allowed := sweepValid and not na(sweepBar)
+        else
+            allowed := sweepValid and not na(sweepBar) and bar_index - sweepBar <= liquidityLookback
+    allowed and f_keyOk(bullish)
+
+// Drawn when the mark is shown. The line runs from the swept candle to this mark,
+// and the label sits on that line. Removing the mark removes the line.
+f_markSweptLevel(int anchorBar, float price, int side, int kind, string markText) =>
+    line markLine = na
+    label markLabel = na
+    if not na(anchorBar) and not na(price)
+        bool bullishSweep = side == DIR_BULL
+        color markColor = bullishSweep ? bullObColor : bearObColor
+        int lineRight = math.max(anchorBar + 1, bar_index)
+        markLine := line.new(anchorBar, price, lineRight, price,
+             xloc = xloc.bar_index, color = markColor, style = line.style_dashed, width = 1)
+        markLabel := label.new(lineRight, price, markText,
+             xloc = xloc.bar_index, yloc = yloc.price, color = markColor,
+             style = label.style_label_left, textcolor = color.white, size = size.small,
+             tooltip = "Swept " + str.tostring(price, format.mintick) + " and closed back inside")
+        array.push(sweepLines, markLine)
+        array.push(sweepLabels, markLabel)
+        array.push(sweepLabelBars, anchorBar)
+        array.push(sweepLabelSides, side)
+        array.push(sweepLabelKinds, kind)
+        while array.size(sweepLabels) > 50
+            label.delete(array.shift(sweepLabels))
+            line.delete(array.shift(sweepLines))
+            array.shift(sweepLabelBars)
+            array.shift(sweepLabelSides)
+            array.shift(sweepLabelKinds)
+    [markLine, markLabel]
+
+f_labelFirstSweep(Formation formation) =>
+    bool labeled = false
+    if liquidityOn and not na(formation.sweepBar) and not na(formation.sweepPrice)
+        bool bullishSweep = formation.direction == DIR_BULL
+        [markLine, markLabel] = f_markSweptLevel(formation.sweepBar, formation.sweepPrice, formation.direction, 1, liquiditySelected + " Sweep")
+        formation.sweepLine := markLine
+        formation.sweepTag := markLabel
+        labeled := not na(markLabel)
+        if keyLevelOn
+            int keyBar = bullishSweep ? lastKeyBullBar : lastKeyBearBar
+            float keyPrice = bullishSweep ? keyBullRangeLow : keyBearRangeHigh
+            bool keyValid = bullishSweep ? keyBullValid : keyBearValid
+            if keyValid and not na(keyBar) and not na(keyPrice)
+                [keyLine, keyLabel] = f_markSweptLevel(keyBar, keyPrice, formation.direction, 2, keySelected + " Sweep")
+                formation.keySweepLine := keyLine
+                formation.keySweepTag := keyLabel
+                labeled := labeled or not na(keyLabel)
+    labeled
+
+latestSwing(float price, bool bullish) =>
+    float foundPrice = na
+    int foundTime = na
+    int kind = bullish ? 1 : -1
+    int count = array.size(targetSwingPrices)
+    if not na(price) and count > 0
+        for swingIndex = count - 1 to 0
+            float swingPrice = array.get(targetSwingPrices, swingIndex)
+            bool beyond = bullish ? swingPrice > price : swingPrice < price
+            if array.get(targetSwingKinds, swingIndex) == kind and beyond
+                foundPrice := swingPrice
+                foundTime := array.get(targetSwingTimes, swingIndex)
+                break
+    [foundPrice, foundTime]
+
+f_target(float entry, float stopLevel, bool bullish) =>
+    float risk = bullish ? entry - stopLevel : stopLevel - entry
+    float resultPrice = na
+    int resultTime = na
+    bool underMin = false
+    // The final target decides the mark: the swing, the two-times fallback, or the Max Target cap.
+    bool htfTooClose = false
+    bool stopOk = risk > 0
+    if targetOn and stopOk
+        if swingTargetOn
+            [swingPrice, swingTime] = latestSwing(entry, bullish)
+            resultPrice := na(swingPrice) ? (bullish ? entry + risk * 2 : entry - risk * 2) : swingPrice
+            resultTime := na(swingPrice) ? na : swingTime
+        else if maxTarget > 0
+            resultPrice := bullish ? entry + risk * maxTarget : entry - risk * maxTarget
+        float reward = na(resultPrice) ? na : (bullish ? resultPrice - entry : entry - resultPrice)
+        if maxTarget > 0 and not na(resultTime) and not na(reward) and reward > maxTarget * risk
+            resultPrice := bullish ? entry + risk * maxTarget : entry - risk * maxTarget
+            resultTime := na
+            reward := maxTarget * risk
+        if minRr > 0 and (na(reward) or reward < minRr * risk)
+            htfTooClose := true
+            underMin := true
+        if na(resultPrice) or na(reward) or reward < risk
+            resultPrice := na
+            resultTime := na
+            underMin := false
+    else if minRr > 0
+        htfTooClose := true
+    [resultPrice, resultTime, underMin, htfTooClose]
+
+// Market at close reprices the entry, the target, and Min RR from the close
+// passed in. A swing break passes the displacement candle. A flip passes the
+// flip candle. Limit at the swing keeps the swing prices. A stop on the wrong
+// side of that close leaves the mark off. The market level is one expression
+// so the returned price is that close on every bar the option is on.
+f_resolveEntry(float swingLevel, float stopLevel, float swingTarget, int swingAnchor, bool swingUnder, bool swingTooClose, bool bullish, float marketPrice) =>
+    bool stopSide = bullish ? stopLevel < marketPrice : stopLevel > marketPrice
+    [marketTarget, marketAnchor, marketUnder, marketTooClose] = f_target(marketPrice, stopLevel, bullish)
+    float level = marketEntry ? marketPrice : swingLevel
+    float target = marketEntry ? (stopSide ? marketTarget : na) : swingTarget
+    int anchor = marketEntry ? (stopSide ? marketAnchor : na) : swingAnchor
+    bool under = marketEntry ? (stopSide ? marketUnder : false) : swingUnder
+    bool tooClose = marketEntry ? (stopSide ? marketTooClose : true) : swingTooClose
+    [level, target, anchor, under, tooClose]
+
+float pivotHigh = ta.pivothigh(high, swingLength, swingLength)
+float pivotLow = ta.pivotlow(low, swingLength, swingLength)
+
+var float swingHigh = na
+var int swingHighBar = na
+var float swingLow = na
+var int swingLowBar = na
+var int brokenHighBar = na
+var int brokenLowBar = na
+// Armed on the candle that closes through the swing. Drawn on the next bar
+// only when that swing sits inside the body gap.
+var int armedDirection = 0
+var int armedKind = 0
+var int armedBar = na
+var int armedSwingBar = na
+var float armedLevel = na
+var int armedObBar = na
+var float armedObTop = na
+var float armedObBottom = na
+var float armedCandle1BodyHigh = na
+var float armedCandle1BodyLow = na
+var float armedHigh = na
+var float armedLow = na
+var float armedStop = na
+var float armedTarget = na
+var int armedTime = na
+var int armedTargetTime = na
+var bool armedUnder = false
+var float armedSwingStop = na
+var float armedSwingTarget = na
+var int armedSwingTargetTime = na
+var bool armedSwingTooClose = true
+var bool armedMarketLive = false
+var int armedSweepBar = na
+var float armedSweepPrice = na
+
+if not na(pivotHigh)
+    swingHigh := pivotHigh
+    swingHighBar := bar_index - swingLength
+
+if not na(pivotLow)
+    swingLow := pivotLow
+    swingLowBar := bar_index - swingLength
+
+bool swingHighOpen = not na(swingHigh) and (na(brokenHighBar) or brokenHighBar != swingHighBar)
+bool swingLowOpen = not na(swingLow) and (na(brokenLowBar) or brokenLowBar != swingLowBar)
+// The mark is the candle that closes through the swing. An unclaimed close
+// through is booked when Swing Breach Lookback expires. A wick that never
+// closes through does not book the swing.
+var int bullCloseBar = na
+var int bullWatchBar = na
+var int bearCloseBar = na
+var int bearWatchBar = na
+if not na(swingHighBar) and swingHighBar != bullWatchBar
+    bullWatchBar := swingHighBar
+    bullCloseBar := na
+if not na(swingLowBar) and swingLowBar != bearWatchBar
+    bearWatchBar := swingLowBar
+    bearCloseBar := na
+if barstate.isconfirmed and swingHighOpen and na(bullCloseBar) and close > swingHigh and close[1] <= swingHigh
+    bullCloseBar := bar_index
+if barstate.isconfirmed and swingLowOpen and na(bearCloseBar) and close < swingLow and close[1] >= swingLow
+    bearCloseBar := bar_index
+int bullCloseAge = na(bullCloseBar) ? na : bar_index - bullCloseBar
+int bearCloseAge = na(bearCloseBar) ? na : bar_index - bearCloseBar
+bool bullishBreakNow = barstate.isconfirmed and swingHighOpen and close > swingHigh and close[1] <= swingHigh and close > open
+bool bearishBreakNow = barstate.isconfirmed and swingLowOpen and close < swingLow and close[1] >= swingLow and close < open
+
+// The next candle confirms when the broken swing sits strictly inside the body
+// gap. A bullish gap needs the previous body high below the swing and this
+// body low above it. A bearish gap is the mirror. Color does not matter.
+// Wicks may overlap. Skip Sundays leaves the swing unused and leaves the
+// current mark in place.
+bool sundaySkipped = skipSundays and dayofweek(time, timeZone) == dayofweek.sunday
+bool formedThisBar = false
+if barstate.isconfirmed and armedDirection != 0
+    if bar_index == armedBar + 1 and not sundaySkipped
+        float candle3BodyHigh = math.max(open, close)
+        float candle3BodyLow = math.min(open, close)
+        bool confirmedFvg = armedDirection == DIR_BULL ?
+             armedLevel > armedCandle1BodyHigh and armedLevel < candle3BodyLow :
+             armedLevel < armedCandle1BodyLow and armedLevel > candle3BodyHigh
+        bool liquidityStill = not liquidityOn or (armedDirection == DIR_BULL ? bullSweepValid : bearSweepValid)
+        bool keyStill = not keyLevelOn or (armedDirection == DIR_BULL ? keyBullValid : keyBearValid)
+        bool sweepStillValid = liquidityStill and keyStill and (liquidityOn or not keyLevelOn)
+        bool confirmWindow = marketEntry or f_inWindow()
+        bool bothWindow = bothEntry and (armedMarketLive or f_inWindow())
+        if confirmedFvg and sweepStillValid and (confirmWindow or bothWindow)
+            float displacementClose = close[1]
+            [resolvedLevel, useTarget, useAnchor, useUnder, useTooClose] = f_resolveEntry(armedLevel, armedStop, armedTarget, armedTargetTime, armedUnder, false, armedDirection == DIR_BULL, displacementClose)
+            float useLevel = marketEntry ? displacementClose : resolvedLevel
+            if bothEntry
+                bool limitLeg = not armedSwingTooClose and f_inWindow()
+                bool marketLeg = armedMarketLive
+                if marketLeg or limitLeg
+                    float gapTop = armedDirection == DIR_BULL ? candle3BodyLow : armedCandle1BodyLow
+                    float gapBottom = armedDirection == DIR_BULL ? armedCandle1BodyHigh : candle3BodyHigh
+                    float primaryLevel = marketLeg ? displacementClose : armedLevel
+                    float primaryStop = marketLeg ? armedStop : armedSwingStop
+                    float primaryTarget = marketLeg ? armedTarget : armedSwingTarget
+                    int primaryAnchor = marketLeg ? armedTargetTime : armedSwingTargetTime
+                    Formation formation = Formation.new(armedDirection, armedKind, armedBar, armedSwingBar, primaryLevel,
+                         armedObBar, armedObTop, armedObBottom, armedBar - 1, bar_index, gapTop, gapBottom,
+                         false, false, false, armedHigh, armedLow, primaryStop, primaryTarget, armedTime, primaryAnchor, armedUnder, false,
+                         na, na, na, na, na, na, na)
+                    formation.closeLines := marketLeg
+                    if marketLeg and limitLeg
+                        formation.swingLevel := armedLevel
+                        formation.swingStop := armedSwingStop
+                        formation.swingTarget := armedSwingTarget
+                    formation.sweepBar := armedSweepBar
+                    formation.sweepPrice := armedSweepPrice
+                    formation.opposingSwing := armedDirection == DIR_BULL ? swingLow : swingHigh
+                    if f_store(formation)
+                        f_show(formation)
+                        f_labelFirstSweep(formation)
+                        formedThisBar := true
+            else if not useTooClose
+                float gapTop = armedDirection == DIR_BULL ? candle3BodyLow : armedCandle1BodyLow
+                float gapBottom = armedDirection == DIR_BULL ? armedCandle1BodyHigh : candle3BodyHigh
+                Formation formation = Formation.new(armedDirection, armedKind, armedBar, armedSwingBar, useLevel,
+                     armedObBar, armedObTop, armedObBottom, armedBar - 1, bar_index, gapTop, gapBottom,
+                     false, false, false, armedHigh, armedLow, armedStop, useTarget, armedTime, useAnchor, useUnder, false,
+                     na, na, na, na, na, na, na)
+                formation.sweepBar := armedSweepBar
+                formation.sweepPrice := armedSweepPrice
+                formation.opposingSwing := armedDirection == DIR_BULL ? swingLow : swingHigh
+                if f_store(formation)
+                    f_show(formation)
+                    f_labelFirstSweep(formation)
+                    formedThisBar := true
+    armedDirection := 0
+    armedMarketLive := false
+
+// A close through the marked candle, in the opposite direction, is the new
+// mark. The fair value gap does not apply. The time window does. Min RR does.
+// A liquidity sweep outside the lookback means this flip is not considered, so
+// the working mark stays. Below Min RR, or outside the window, the old mark is
+// removed and nothing is drawn. A wick through the candle does not. Skip
+// Sundays leaves the mark in place.
+bool flippedThisBar = false
+if barstate.isconfirmed and not sundaySkipped and array.size(formations) > 0
+    Formation zone = array.get(formations, array.size(formations) - 1)
+    bool brokeOpposingSwing = (zone.direction == DIR_BEAR and bullishBreakNow) or (zone.direction == DIR_BULL and bearishBreakNow)
+    bool closedBullZone = zone.direction == DIR_BULL and not zone.flipped and bar_index > zone.creationBar + 1 and
+         close < open and close < zone.impulseLow and not brokeOpposingSwing
+    bool closedBearZone = zone.direction == DIR_BEAR and not zone.flipped and bar_index > zone.creationBar + 1 and
+         close > open and close > zone.impulseHigh and not brokeOpposingSwing
+    if closedBullZone or closedBearZone
+        int flipDirection = closedBullZone ? DIR_BEAR : DIR_BULL
+        bool flipLiquidity = f_liquidityOk(flipDirection == DIR_BULL)
+        if flipLiquidity
+            int flipKind = structureDirection == flipDirection ? KIND_BOS : KIND_MSS
+            float flipLevel = na
+            int flipSwingBar = na
+            if flipDirection == DIR_BULL and not na(swingHigh) and close > swingHigh
+                flipLevel := swingHigh
+                flipSwingBar := swingHighBar
+                if swingHighOpen
+                    brokenHighBar := swingHighBar
+            else if flipDirection == DIR_BEAR and not na(swingLow) and close < swingLow
+                flipLevel := swingLow
+                flipSwingBar := swingLowBar
+                if swingLowOpen
+                    brokenLowBar := swingLowBar
+            float flipStop = marketEntry ? open : (flipDirection == DIR_BULL ? low[1] : high[1])
+            [swingTarget, swingAnchor, swingUnder, swingTooClose] = f_target(flipLevel, flipStop, flipDirection == DIR_BULL)
+            [resolvedLevel, useTarget, useAnchor, useUnder, flipTooClose] = f_resolveEntry(flipLevel, flipStop, swingTarget, swingAnchor, swingUnder, swingTooClose, flipDirection == DIR_BULL, close)
+            float useLevel = marketEntry ? close : resolvedLevel
+            bool limitTooClose = flipTooClose
+            float bothOpen = open
+            float bothClose = close
+            bool bothMarketTooClose = true
+            float bothMarketTarget = na
+            int bothMarketAnchor = na
+            bool bothMarketUnder = false
+            if bothEntry
+                [bothMarketTarget, bothMarketAnchor, bothMarketUnder, bothMarketTooClose] = f_target(bothClose, bothOpen, flipDirection == DIR_BULL)
+                flipTooClose := bothMarketTooClose and limitTooClose
+            bool marketLeg = bothEntry and not bothMarketTooClose
+            bool limitLeg = bothEntry and not limitTooClose
+            bool flipWindow = f_inWindow()
+            zone.flipped := true
+            structureDirection := flipDirection
+            Formation flipFormation = Formation.new(flipDirection, flipKind, bar_index, flipSwingBar, useLevel,
+                 zone.creationBar, zone.impulseHigh, zone.impulseLow, zone.creationBar, bar_index, high, low,
+                 false, false, false, high, low, flipStop, useTarget, time, useAnchor, useUnder, false,
+                 na, na, na, na, na, na, na)
+            flipFormation.sweepBar := flipDirection == DIR_BULL ? firstBullSweepBar : firstBearSweepBar
+            flipFormation.sweepPrice := flipDirection == DIR_BULL ? firstBullSweepPrice : firstBearSweepPrice
+            flipFormation.opposingSwing := flipDirection == DIR_BULL ? swingLow : swingHigh
+            if marketLeg
+                flipFormation.level := bothClose
+                flipFormation.stopPrice := bothOpen
+                flipFormation.targetPrice := bothMarketTarget
+                flipFormation.targetAnchorTime := bothMarketAnchor
+                flipFormation.underMinRr := bothMarketUnder
+                flipFormation.closeLines := true
+                if limitLeg
+                    flipFormation.swingLevel := useLevel
+                    flipFormation.swingStop := flipStop
+                    flipFormation.swingTarget := useTarget
+            if flipTooClose or not flipWindow
+                f_deleteVisuals(zone)
+                f_store(flipFormation)
+            else if f_store(flipFormation)
+                f_show(flipFormation)
+                f_labelFirstSweep(flipFormation)
+                formedThisBar := true
+            flippedThisBar := true
+
+// After a confirmation, the next swing break the other way is a continuation.
+// The entry is this candle's close. The stop is its open.
+// This bar is not also armed as a new fair value gap.
+if barstate.isconfirmed and not sundaySkipped and not flippedThisBar and not formedThisBar and f_inWindow() and array.size(formations) > 0
+    Formation postZone = array.get(formations, array.size(formations) - 1)
+    bool postBull = postZone.direction == DIR_BEAR and not postZone.flipped and bar_index > postZone.creationBar + 1 and bullishBreakNow
+    bool postBear = postZone.direction == DIR_BULL and not postZone.flipped and bar_index > postZone.creationBar + 1 and bearishBreakNow
+    if postBull or postBear
+        int postDir = postBull ? DIR_BULL : DIR_BEAR
+        float postClose = close
+        float postOpen = open
+        bool postStopSide = postBull ? postOpen < postClose : postOpen > postClose
+        [postTarget, postAnchor, postUnder, postTooClose] = f_target(postClose, postOpen, postBull)
+        int postKind = structureDirection == postDir ? KIND_BOS : KIND_MSS
+        postZone.flipped := true
+        structureDirection := postDir
+        flippedThisBar := true
+        if postBull
+            brokenHighBar := swingHighBar
+        else
+            brokenLowBar := swingLowBar
+        if postStopSide and not postTooClose
+            Formation postFormation = Formation.new(postDir, postKind, bar_index, bar_index, postClose,
+                 bar_index, high, low, bar_index, bar_index, high, low,
+                 false, false, false, high, low, postOpen, postTarget, time, postAnchor, postUnder, false,
+                 na, na, na, na, na, na, na)
+            postFormation.atClose := true
+            postFormation.opposingSwing := postBull ? swingLow : swingHigh
+            postFormation.sweepBar := postBull ? firstBullSweepBar : firstBearSweepBar
+            postFormation.sweepPrice := postBull ? firstBullSweepPrice : firstBearSweepPrice
+            if f_store(postFormation)
+                f_show(postFormation)
+                f_labelFirstSweep(postFormation)
+                formedThisBar := true
+
+if not sundaySkipped and not flippedThisBar and bullishBreakNow and f_inWindow()
+    int kind = structureDirection == DIR_BULL ? KIND_BOS : KIND_MSS
+    structureDirection := DIR_BULL
+    brokenHighBar := swingHighBar
+    [targetPrice, targetAnchor, underMinRr, htfTooClose] = f_target(swingHigh, low[1], true)
+    // A final target inside Min RR, or a sweep outside the lookback, is booked and left unmarked.
+    // Market at close checks Min RR on the displacement close, against that candle's open.
+    float bullArmClose = close
+    float bullArmOpen = open
+    bool bullArmTooClose = true
+    float bullArmTarget = na
+    int bullArmAnchor = na
+    bool bullArmUnder = false
+    if bothEntry
+        [bullArmTarget, bullArmAnchor, bullArmUnder, bullArmTooClose] = f_target(bullArmClose, bullArmOpen, true)
+    bool swingArm = (marketEntry or not htfTooClose) and f_liquidityOk(true)
+    bool bothArm = bothEntry and f_liquidityOk(true) and (not htfTooClose or not bullArmTooClose)
+    if swingArm or bothArm
+        armedDirection := DIR_BULL
+        armedKind := kind
+        armedBar := bar_index
+        armedSwingBar := swingHighBar
+        armedLevel := swingHigh
+        armedObBar := bar_index
+        armedObTop := high
+        armedObBottom := low
+        armedCandle1BodyHigh := math.max(open[1], close[1])
+        armedCandle1BodyLow := math.min(open[1], close[1])
+        armedHigh := high
+        armedLow := low
+        armedStop := low[1]
+        armedSwingStop := low[1]
+        armedSwingTarget := targetPrice
+        armedSwingTargetTime := targetAnchor
+        armedSwingTooClose := htfTooClose
+        armedTarget := targetPrice
+        armedTime := time
+        armedTargetTime := targetAnchor
+        armedUnder := underMinRr
+        armedMarketLive := false
+        if marketEntry
+            armedStop := open
+        if bothEntry
+            armedStop := open
+            armedTarget := bullArmTarget
+            armedTargetTime := bullArmAnchor
+            armedUnder := bullArmUnder
+            armedMarketLive := not bullArmTooClose
+        armedSweepBar := firstBullSweepBar
+        armedSweepPrice := firstBullSweepPrice
+else if not sundaySkipped and not flippedThisBar and barstate.isconfirmed and swingHighOpen and not na(bullCloseAge) and bullCloseAge == swingBreachLookback
+    structureDirection := DIR_BULL
+    brokenHighBar := swingHighBar
+
+if not sundaySkipped and not flippedThisBar and bearishBreakNow and f_inWindow()
+    int kind = structureDirection == DIR_BEAR ? KIND_BOS : KIND_MSS
+    structureDirection := DIR_BEAR
+    brokenLowBar := swingLowBar
+    [targetPrice, targetAnchor, underMinRr, htfTooClose] = f_target(swingLow, high[1], false)
+    float bearArmClose = close
+    float bearArmOpen = open
+    bool bearArmTooClose = true
+    float bearArmTarget = na
+    int bearArmAnchor = na
+    bool bearArmUnder = false
+    if bothEntry
+        [bearArmTarget, bearArmAnchor, bearArmUnder, bearArmTooClose] = f_target(bearArmClose, bearArmOpen, false)
+    bool bearSwingArm = (marketEntry or not htfTooClose) and f_liquidityOk(false)
+    bool bearBothArm = bothEntry and f_liquidityOk(false) and (not htfTooClose or not bearArmTooClose)
+    if bearSwingArm or bearBothArm
+        armedDirection := DIR_BEAR
+        armedKind := kind
+        armedBar := bar_index
+        armedSwingBar := swingLowBar
+        armedLevel := swingLow
+        armedObBar := bar_index
+        armedObTop := high
+        armedObBottom := low
+        armedCandle1BodyHigh := math.max(open[1], close[1])
+        armedCandle1BodyLow := math.min(open[1], close[1])
+        armedHigh := high
+        armedLow := low
+        armedStop := high[1]
+        armedSwingStop := high[1]
+        armedSwingTarget := targetPrice
+        armedSwingTargetTime := targetAnchor
+        armedSwingTooClose := htfTooClose
+        armedTarget := targetPrice
+        armedTime := time
+        armedTargetTime := targetAnchor
+        armedUnder := underMinRr
+        armedMarketLive := false
+        if marketEntry
+            armedStop := open
+        if bothEntry
+            armedStop := open
+            armedTarget := bearArmTarget
+            armedTargetTime := bearArmAnchor
+            armedUnder := bearArmUnder
+            armedMarketLive := not bearArmTooClose
+        armedSweepBar := firstBearSweepBar
+        armedSweepPrice := firstBearSweepPrice
+else if not sundaySkipped and not flippedThisBar and barstate.isconfirmed and swingLowOpen and not na(bearCloseAge) and bearCloseAge == swingBreachLookback
+    structureDirection := DIR_BEAR
+    brokenLowBar := swingLowBar
+
+// A continuation is the close through the sweep of the breaching candle.
+// The entry is that candle's close. The stop is that candle's open.
+// Session VWAP matches the chart VWAP. The chase check is only for a continuation.
+float sessionVwap = ta.vwap(hlc3)
+if continuationDir != 0 and barstate.isconfirmed and not sundaySkipped and not flippedThisBar and not formedThisBar and f_inWindow()
+    bool continuationBull = continuationDir == DIR_BULL
+    float continuationClose = close
+    float continuationOpen = open
+    bool continuationStopSide = continuationBull ? continuationOpen < continuationClose : continuationOpen > continuationClose
+    float continuationRisk = math.abs(continuationClose - continuationOpen)
+    float vwapDistance = continuationBull ? continuationClose - sessionVwap : sessionVwap - continuationClose
+    bool vwapChased = useVwapChase and not na(sessionVwap) and continuationRisk > 0 and vwapDistance > vwapChase * continuationRisk
+    [continuationTarget, continuationAnchor, continuationUnder, continuationTooClose] = f_target(continuationClose, continuationOpen, continuationBull)
+    if continuationStopSide and not continuationTooClose and not vwapChased and f_keyOk(continuationBull)
+        int continuationKind = structureDirection == continuationDir ? KIND_BOS : KIND_MSS
+        structureDirection := continuationDir
+        Formation continuationFormation = Formation.new(continuationDir, continuationKind, bar_index, bar_index, continuationClose,
+             bar_index, high, low, bar_index, bar_index, high, low,
+             false, false, false, high, low, continuationOpen, continuationTarget, time, continuationAnchor, continuationUnder, false,
+             na, na, na, na, na, na, na)
+        continuationFormation.atClose := true
+        continuationFormation.opposingSwing := continuationBull ? swingLow : swingHigh
+        continuationFormation.sweepBar := continuationBull ? bullContSweepBar : bearContSweepBar
+        continuationFormation.sweepPrice := continuationBull ? bullContSweepPrice : bearContSweepPrice
+        if f_store(continuationFormation)
+            f_show(continuationFormation)
+            f_labelFirstSweep(continuationFormation)
+            formedThisBar := true
+continuationDir := 0
+
+// The candle that leaves the gap is not a fill. A later bar that trades into
+// the gap or the order block marks that zone touched.
+int formationCount = array.size(formations)
+if barstate.isconfirmed and formationCount > 0
+    for index = 0 to formationCount - 1
+        Formation formation = array.get(formations, index)
+        if bar_index > formation.creationBar and not formation.obMitigated and f_touched(formation.obTop, formation.obBottom)
+            formation.obMitigated := true
+        if bar_index > formation.creationBar + 1 and not formation.fvgMitigated and f_touched(formation.fvgTop, formation.fvgBottom)
+            formation.fvgMitigated := true
+        // A stop traded after the drawing candle hides the mark, including a stop after the entry.
+        if formation.isVisible and not na(formation.entryDrawnBar) and bar_index > formation.entryDrawnBar
+            bool entryTouched = not na(formation.level) and high >= formation.level and low <= formation.level
+            bool stopTouched = high >= formation.stopPrice and low <= formation.stopPrice
+            bool swingOn = not na(formation.swingLevel) and not na(formation.swingStop)
+            bool swingEntryTouched = swingOn and high >= formation.swingLevel and low <= formation.swingLevel
+            bool swingStopTouched = swingOn and high >= formation.swingStop and low <= formation.swingStop
+            bool swingStill = swingOn and not formation.swingEntryMitigated and not (swingStopTouched and not swingEntryTouched)
+            if swingOn and not formation.swingEntryMitigated
+                if swingStopTouched and not swingEntryTouched
+                    line.delete(formation.swingEntryLine)
+                    line.delete(formation.swingStopLine)
+                    line.delete(formation.swingTargetLine)
+                    formation.swingEntryLine := na
+                    formation.swingStopLine := na
+                    formation.swingTargetLine := na
+                    formation.swingEntryMitigated := true
+                    formation.swingLevel := na
+                else if not na(formation.swingEntryLine)
+                    int swingRight = bar_index + 1
+                    line.set_x2(formation.swingEntryLine, swingRight)
+                    line.set_x2(formation.swingStopLine, swingRight)
+                    if not na(formation.swingTargetLine)
+                        line.set_x2(formation.swingTargetLine, swingRight)
+                    if swingEntryTouched
+                        formation.swingEntryMitigated := true
+            if stopTouched
+                if swingStill
+                    line.delete(formation.entryLine)
+                    line.delete(formation.stopLine)
+                    line.delete(formation.targetLine)
+                    formation.entryLine := na
+                    formation.stopLine := na
+                    formation.targetLine := na
+                    formation.entryMitigated := true
+                else
+                    f_deleteVisuals(formation)
+            else if not formation.entryMitigated and not na(formation.entryLine)
+                int lineRight = bar_index + 1
+                line.set_x2(formation.entryLine, lineRight)
+                line.set_x2(formation.stopLine, lineRight)
+                if not na(formation.targetLine)
+                    line.set_x2(formation.targetLine, lineRight)
+                if entryTouched
+                    formation.entryMitigated := true
