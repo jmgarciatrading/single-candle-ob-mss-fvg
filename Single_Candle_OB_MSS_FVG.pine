@@ -585,12 +585,30 @@ f_liquidityOk(bool bullish) =>
             allowed := sweepValid and not na(sweepBar) and bar_index - sweepBar <= liquidityLookback
     allowed and f_keyOk(bullish)
 
+// A later mark of the same price, side, and pool deletes the earlier line and
+// label. The level keeps the latest label.
+f_dropSameSweep(float price, int side, int kind) =>
+    int count = array.size(sweepLabels)
+    if count > 0
+        for index = count - 1 to 0
+            line drawnLine = array.get(sweepLines, index)
+            bool sameLevel = array.get(sweepLabelSides, index) == side and array.get(sweepLabelKinds, index) == kind and not na(drawnLine) and line.get_y1(drawnLine) == price
+            if sameLevel
+                label.delete(array.get(sweepLabels, index))
+                line.delete(drawnLine)
+                array.remove(sweepLabels, index)
+                array.remove(sweepLines, index)
+                array.remove(sweepLabelBars, index)
+                array.remove(sweepLabelSides, index)
+                array.remove(sweepLabelKinds, index)
+
 // Drawn when the mark is shown. The line runs from the swept candle to this mark,
 // and the label sits on that line. Removing the mark removes the line.
 f_markSweptLevel(int anchorBar, float price, int side, int kind, string markText) =>
     line markLine = na
     label markLabel = na
     if not na(anchorBar) and not na(price)
+        f_dropSameSweep(price, side, kind)
         bool bullishSweep = side == DIR_BULL
         color markColor = bullishSweep ? bullObColor : bearObColor
         int lineRight = math.max(anchorBar + 1, bar_index)
