@@ -1,0 +1,38 @@
+Single Candle OB + MSS + FVG, PyneCore run
+Date: 2026-11-05
+Scripts: Single_Candle_OB_MSS_FVG.pine and Single_Candle_OB_MSS_FVG_Strategy.pine
+Compiler: PyneCore, workdir /home/vesper/.local/share/pynecore/workdir
+Compiled to scripts/Single_Candle_OB_MSS_FVG.py and scripts/Single_Candle_OB_MSS_FVG_Strategy.py
+Those compiled files stay out of this repository.
+
+Data: the lab file mes-fut-20260501-20261030.ohlcv-1m.csv.zst, one outright MES per day
+(the day's highest-volume MES contract), 179700 one-minute bars, symbol MES, timezone UTC.
+Chart timeframe 5, so Pyne aggregated those bars to five minutes.
+This series is not back-adjusted. The June and September rolls stay in the price.
+The Python book below is the back-adjusted result. These dollars are not that book.
+
+Defaults used by a fresh paste:
+Close Location 0, Timeframe Target 4H, Min RR 2, Max Target 14, Target Swing Length 6
+Liquidity Timeframe 4H, Key Level Off, Liquidity Lookback 1, VWAP Chase off
+Structure window 09:30-16:00 America/New_York, minutes 0-60, Skip Sundays off
+Entry Model Market at close
+Entry From 10:05, Min Range 8, Long Extension 22, Max Stop 30
+Hold Winner on, Flat At 15:55 on, Contracts 1, commission 0
+
+Indicator: ran, viz NDJSON written, 35943 lines.
+Strategy: 341 closed trades, 83 wins, 257 losses.
+Net profit -38.50, profit factor 0.976, max equity drawdown 407.
+Largest win 104.50. Largest loss -25.25. The 30-point stop cap held.
+
+Two of the three required winners are this run, after removing the June contract offset of 130.25:
+2026-06-09 14:10 UTC short (10:10 New York), entry 7437.00, exit 15:25 UTC at 7355.50, +81.50.
+2026-06-09 16:55 UTC long (12:55 New York), entry 7287.25, session exit 19:55 UTC (15:55 New York) at 7391.75, +104.50.
+
+The 17 June flip is not the +98 point trade on this aggregation.
+A later short that day, 19:15 UTC, exited at the 15:55 close 7492.00 for +29.25.
+7492.00 is the same 15:55 price as the lab exit once the September-contract offset is removed.
+The five-minute bars Pyne built are not the lab's five-minute bars.
+
+PineTS ran both scripts on 400 synthetic five-minute bars after the edit.
+Unit tests: 27 passed.
+TradingView has not compiled this paste.
