@@ -207,6 +207,7 @@ type Formation
     label sweepTag = na
     line keySweepLine = na
     label keySweepTag = na
+    bool opposingSweep = false
 
 var array<Formation> formations = array.new<Formation>()
 var int structureDirection = 0
@@ -471,6 +472,80 @@ f_store(Formation formation) =>
         array.push(formations, formation)
         stored := true
     stored
+
+// A flip closes a position in the original direction and opens the opposite one.
+// Either entry leg can qualify. The selected Entry Model is used when it passes.
+f_flipOrder(Formation formation) =>
+    bool bullish = formation.direction == DIR_BULL
+    bool useMarket = formation.atClose or formation.closeLines
+    float orderEntry = useMarket ? close : formation.level
+    bool orderOk = f_entryOk(formation.direction, orderEntry, formation.stopPrice)
+    bool originalLong = strategy.position_size > 0
+    bool originalShort = strategy.position_size < 0
+    bool sameWay = bullish ? originalLong : originalShort
+    if orderOk and not sameWay
+        if not bullish and originalLong
+            strategy.close("1C Long", comment = "Flip")
+            strategy.close("1C Long Limit", comment = "Flip")
+            strategy.cancel("1C Long")
+            strategy.cancel("1C Long Limit")
+        if bullish and originalShort
+            strategy.close("1C Short", comment = "Flip")
+            strategy.close("1C Short Limit", comment = "Flip")
+            strategy.cancel("1C Short")
+            strategy.cancel("1C Short Limit")
+        f_clearPending()
+        if useMarket
+            if bullish
+                strategy.entry("1C Long", strategy.long, qty = contracts)
+                formation.protectWaiting := true
+            if not bullish
+                strategy.entry("1C Short", strategy.short, qty = contracts)
+                formation.protectWaiting := true
+        if not useMarket
+            if bullish
+                strategy.entry("1C Long", strategy.long, qty = contracts, limit = formation.level)
+                formation.limitWaiting := true
+            if not bullish
+                strategy.entry("1C Short", strategy.short, qty = contracts, limit = formation.level)
+                formation.limitWaiting := true
+
+f_oppositeOpen(int direction) =>
+    bool opposite = direction == DIR_BULL ? strategy.position_size < 0 : strategy.position_size > 0
+    opposite
+
+// A regular setup with its own sweep closes the opposite position and opens this one.
+f_replaceOrder(Formation formation) =>
+    bool bullish = formation.direction == DIR_BULL
+    bool useMarket = marketEntry or formation.atClose or formation.closeLines
+    float orderEntry = useMarket ? close : formation.level
+    bool orderOk = f_entryOk(formation.direction, orderEntry, formation.stopPrice)
+    if orderOk and f_oppositeOpen(formation.direction)
+        if not bullish
+            strategy.close("1C Long", comment = "Formation")
+            strategy.close("1C Long Limit", comment = "Formation")
+            strategy.cancel("1C Long")
+            strategy.cancel("1C Long Limit")
+        if bullish
+            strategy.close("1C Short", comment = "Formation")
+            strategy.close("1C Short Limit", comment = "Formation")
+            strategy.cancel("1C Short")
+            strategy.cancel("1C Short Limit")
+        f_clearPending()
+        if useMarket
+            if bullish
+                strategy.entry("1C Long", strategy.long, qty = contracts)
+                formation.protectWaiting := true
+            if not bullish
+                strategy.entry("1C Short", strategy.short, qty = contracts)
+                formation.protectWaiting := true
+        if not useMarket
+            if bullish
+                strategy.entry("1C Long", strategy.long, qty = contracts, limit = formation.level)
+                formation.limitWaiting := true
+            if not bullish
+                strategy.entry("1C Short", strategy.short, qty = contracts, limit = formation.level)
+                formation.limitWaiting := true
 
 f_show(Formation formation, bool placeOrder) =>
     bool orderOk = f_showOrderOk(formation)
@@ -762,6 +837,36 @@ f_liquidityOk(bool bullish) =>
             allowed := sweepValid and not na(sweepBar) and bar_index - sweepBar <= liquidityLookback
     allowed and f_keyOk(bullish)
 
+// A sweep still inside Liquidity Lookback. Key Level keeps it without that count.
+f_sweepFresh(int sweepBar, bool sweepValid) =>
+    liquidityOn and sweepValid and not na(sweepBar) and (keyLevelOn or bar_index - sweepBar <= liquidityLookback)
+
+// A flip opposes this sweep. It has no sweep on its own side.
+// One confirmed flip closes the original direction and opens the opposite one.
+f_flipLiquidity(bool bullish) =>
+    bool sameFresh = bullish ? f_sweepFresh(lastBullSweepBar, bullSweepValid) : f_sweepFresh(lastBearSweepBar, bearSweepValid)
+    bool otherFresh = bullish ? f_sweepFresh(lastBearSweepBar, bearSweepValid) : f_sweepFresh(lastBullSweepBar, bullSweepValid)
+    liquidityOn and not sameFresh and otherFresh
+
+// One flip per swept candle. The latch stays while that sweep is still fresh.
+var int flipSpentCandle = na
+var int flipSpentSide = 0
+
+f_flipSpent(bool bullish) =>
+    int spentSide = bullish ? DIR_BEAR : DIR_BULL
+    int liveCandle = bullish ? bearSweepCandle : bullSweepCandle
+    flipSpentSide == spentSide and not na(flipSpentCandle) and not na(liveCandle) and flipSpentCandle == liveCandle
+
+bool spentBullFresh = flipSpentSide == DIR_BULL and not na(flipSpentCandle) and bullSweepCandle == flipSpentCandle and f_sweepFresh(lastBullSweepBar, bullSweepValid)
+bool spentBearFresh = flipSpentSide == DIR_BEAR and not na(flipSpentCandle) and bearSweepCandle == flipSpentCandle and f_sweepFresh(lastBearSweepBar, bearSweepValid)
+if flipSpentSide != 0 and not spentBullFresh and not spentBearFresh
+    flipSpentCandle := na
+    flipSpentSide := 0
+
+f_flipSpendSide(Formation formation) =>
+    int spentSide = formation.opposingSweep ? -formation.direction : 0
+    spentSide
+
 // A later mark of the same price, side, and pool deletes the earlier line and
 // label. The level keeps the latest label.
 f_dropSameSweep(float price, int side, int kind) =>
@@ -811,8 +916,9 @@ f_markSweptLevel(int anchorBar, float price, int side, int kind, string markText
 f_labelFirstSweep(Formation formation) =>
     bool labeled = false
     if liquidityOn and not na(formation.sweepBar) and not na(formation.sweepPrice)
-        bool bullishSweep = formation.direction == DIR_BULL
-        [markLine, markLabel] = f_markSweptLevel(formation.sweepBar, formation.sweepPrice, formation.direction, 1, liquiditySelected + " Sweep")
+        int sweepSide = formation.opposingSweep ? -formation.direction : formation.direction
+        bool bullishSweep = sweepSide == DIR_BULL
+        [markLine, markLabel] = f_markSweptLevel(formation.sweepBar, formation.sweepPrice, sweepSide, 1, liquiditySelected + " Sweep")
         formation.sweepLine := markLine
         formation.sweepTag := markLabel
         labeled := not na(markLabel)
@@ -821,7 +927,7 @@ f_labelFirstSweep(Formation formation) =>
             float keyPrice = bullishSweep ? keyBullRangeLow : keyBearRangeHigh
             bool keyValid = bullishSweep ? keyBullValid : keyBearValid
             if keyValid and not na(keyBar) and not na(keyPrice)
-                [keyLine, keyLabel] = f_markSweptLevel(keyBar, keyPrice, formation.direction, 2, keySelected + " Sweep")
+                [keyLine, keyLabel] = f_markSweptLevel(keyBar, keyPrice, sweepSide, 2, keySelected + " Sweep")
                 formation.keySweepLine := keyLine
                 formation.keySweepTag := keyLabel
                 labeled := labeled or not na(keyLabel)
@@ -922,6 +1028,8 @@ var int armedSwingTargetTime = na
 var bool armedSwingTooClose = true
 var int armedSweepBar = na
 var float armedSweepPrice = na
+var bool armedOpposingSweep = false
+var bool flipMarketLive = false
 
 if not na(pivotHigh)
     swingHigh := pivotHigh
@@ -1024,7 +1132,7 @@ if barstate.isconfirmed and armedDirection != 0
         bool confirmedFvg = armedDirection == DIR_BULL ?
              armedLevel > armedCandle1BodyHigh and armedLevel < candle3BodyLow and low > armedLevel :
              armedLevel < armedCandle1BodyLow and armedLevel > candle3BodyHigh and high < armedLevel
-        bool liquidityStill = not liquidityOn or (armedDirection == DIR_BULL ? bullSweepValid : bearSweepValid)
+        bool liquidityStill = not liquidityOn or (armedOpposingSweep ? (armedDirection == DIR_BULL ? bearSweepValid : bullSweepValid) : (armedDirection == DIR_BULL ? bullSweepValid : bearSweepValid))
         bool keyStill = not keyLevelOn or (armedDirection == DIR_BULL ? keyBullValid : keyBearValid)
         bool sweepStillValid = liquidityStill and keyStill and (liquidityOn or not keyLevelOn)
         bool confirmWindow = marketEntry or f_inWindow()
@@ -1033,9 +1141,11 @@ if barstate.isconfirmed and armedDirection != 0
             float displacementClose = close[1]
             [resolvedLevel, useTarget, useAnchor, useUnder, useTooClose] = f_resolveEntry(armedLevel, armedStop, armedTarget, armedTargetTime, armedUnder, false, armedDirection == DIR_BULL, displacementClose)
             float useLevel = marketEntry ? displacementClose : resolvedLevel
-            if bothEntry
-                bool limitLeg = not armedSwingTooClose and f_inWindow()
-                bool marketLeg = marketOrderLive
+            bool flipMarketOk = flipMarketLive and f_entryOk(armedDirection, displacementClose, armedStop)
+            bool flipLimitOk = not armedSwingTooClose and f_inWindow() and f_entryOk(armedDirection, armedLevel, armedSwingStop)
+            if bothEntry or armedOpposingSweep
+                bool limitLeg = armedOpposingSweep ? flipLimitOk : not armedSwingTooClose and f_inWindow()
+                bool marketLeg = armedOpposingSweep ? flipMarketOk : marketOrderLive
                 if marketLeg or limitLeg
                     float gapTop = armedDirection == DIR_BULL ? candle3BodyLow : armedCandle1BodyLow
                     float gapBottom = armedDirection == DIR_BULL ? armedCandle1BodyHigh : candle3BodyHigh
@@ -1054,17 +1164,33 @@ if barstate.isconfirmed and armedDirection != 0
                         formation.swingTarget := armedSwingTarget
                     formation.sweepBar := armedSweepBar
                     formation.sweepPrice := armedSweepPrice
+                    formation.opposingSweep := armedOpposingSweep
                     formation.opposingSwing := armedDirection == DIR_BULL ? swingLow : swingHigh
                     if f_store(formation)
                         f_labelFirstSweep(formation)
-                        if marketLeg
+                        if marketLeg and not armedOpposingSweep
                             f_show(formation, false)
-                            f_protect(formation)
-                            if limitLeg
-                                formation.swingLimitWaiting := true
+                            if f_oppositeOpen(formation.direction)
+                                f_replaceOrder(formation)
+                            if not f_oppositeOpen(formation.direction)
+                                f_protect(formation)
+                                if limitLeg
+                                    formation.swingLimitWaiting := true
                             formedThisBar := true
-                        else
-                            f_show(formation, true)
+                        if armedOpposingSweep
+                            f_show(formation, false)
+                            f_flipOrder(formation)
+                            int spentNow = f_flipSpendSide(formation)
+                            if spentNow != 0
+                                flipSpentSide := spentNow
+                                flipSpentCandle := spentNow == DIR_BULL ? bullSweepCandle : bearSweepCandle
+                            formedThisBar := true
+                        if not marketLeg and not armedOpposingSweep
+                            if f_oppositeOpen(formation.direction)
+                                f_show(formation, false)
+                                f_replaceOrder(formation)
+                            if not f_oppositeOpen(formation.direction)
+                                f_show(formation, true)
                             formedThisBar := true
                     else if marketOrderLive
                         f_closeMarket(armedDirection)
@@ -1081,13 +1207,27 @@ if barstate.isconfirmed and armedDirection != 0
                      na, na, na, na, na, na, na)
                 formation.sweepBar := armedSweepBar
                 formation.sweepPrice := armedSweepPrice
+                formation.opposingSweep := armedOpposingSweep
                 formation.opposingSwing := armedDirection == DIR_BULL ? swingLow : swingHigh
                 if f_store(formation)
                     if marketOrderLive
                         f_show(formation, false)
-                        f_protect(formation)
+                        if f_oppositeOpen(formation.direction)
+                            f_replaceOrder(formation)
+                        if not f_oppositeOpen(formation.direction)
+                            f_protect(formation)
                     else
-                        f_show(formation, true)
+                        if f_oppositeOpen(formation.direction) and not armedOpposingSweep
+                            f_show(formation, false)
+                            f_replaceOrder(formation)
+                        if not f_oppositeOpen(formation.direction) or armedOpposingSweep
+                            f_show(formation, not armedOpposingSweep)
+                        if armedOpposingSweep
+                            f_flipOrder(formation)
+                            int spentNow = f_flipSpendSide(formation)
+                            if spentNow != 0
+                                flipSpentSide := spentNow
+                                flipSpentCandle := spentNow == DIR_BULL ? bullSweepCandle : bearSweepCandle
                     f_labelFirstSweep(formation)
                     formedThisBar := true
                 else if marketOrderLive
@@ -1104,6 +1244,8 @@ if barstate.isconfirmed and armedDirection != 0
         f_closeMarket(armedDirection)
         marketOrderLive := false
     armedDirection := 0
+    armedOpposingSweep := false
+    flipMarketLive := false
 
 // A close back through an old mark is not a setup. Nothing is drawn on that
 // candle, and no order is sent. A new setup is a swing break or a continuation
@@ -1114,9 +1256,11 @@ bool flippedThisBar = false
 // OB + iFVG is known on this close. A candle that qualifies is not also armed as a swing break.
 int ifvgBullBack = -1
 int ifvgBearBack = -1
-if patternIfvg and barstate.isconfirmed and not sundaySkipped and f_inWindow() and f_committed(true) and f_liquidityOk(true)
+bool ifvgBullFlip = f_flipLiquidity(true) and f_keyOk(true) and not f_flipSpent(true)
+bool ifvgBearFlip = f_flipLiquidity(false) and f_keyOk(false) and not f_flipSpent(false)
+if patternIfvg and barstate.isconfirmed and not sundaySkipped and f_inWindow() and f_committed(true) and (f_liquidityOk(true) or ifvgBullFlip)
     ifvgBullBack := f_ifvgBarsBack(true)
-if patternIfvg and barstate.isconfirmed and not sundaySkipped and f_inWindow() and f_committed(false) and f_liquidityOk(false)
+if patternIfvg and barstate.isconfirmed and not sundaySkipped and f_inWindow() and f_committed(false) and (f_liquidityOk(false) or ifvgBearFlip)
     ifvgBearBack := f_ifvgBarsBack(false)
 bool ifvgBull = ifvgBullBack > 0
 bool ifvgBear = ifvgBearBack > 0
@@ -1137,8 +1281,11 @@ int ifvgDirection = ifvgBull ? DIR_BULL : DIR_BEAR
 bool ifvgStopSide = ifvgBull ? ifvgOpen < ifvgClose and ifvgOpen < ifvgLimit : ifvgOpen > ifvgClose and ifvgOpen > ifvgLimit
 [ifvgMarketTarget, ifvgMarketAnchor, ifvgMarketUnder, ifvgMarketTooClose] = f_target(ifvgClose, ifvgOpen, ifvgBull)
 [ifvgLimitTarget, ifvgLimitAnchor, ifvgLimitUnder, ifvgLimitTooClose] = f_target(ifvgLimit, ifvgOpen, ifvgBull)
-bool ifvgMarketLeg = ifvgOn and ifvgStopSide and (marketEntry or bothEntry) and not ifvgMarketTooClose and f_entryOk(ifvgDirection, ifvgClose, ifvgOpen)
-bool ifvgLimitLeg = ifvgOn and ifvgStopSide and (not marketEntry or bothEntry) and not ifvgLimitTooClose and f_entryOk(ifvgDirection, ifvgLimit, ifvgOpen)
+bool ifvgFlip = (ifvgBull and ifvgBullFlip) or (ifvgBear and ifvgBearFlip)
+bool ifvgMarketOk = ifvgOn and ifvgStopSide and not ifvgMarketTooClose and f_entryOk(ifvgDirection, ifvgClose, ifvgOpen)
+bool ifvgLimitOk = ifvgOn and ifvgStopSide and not ifvgLimitTooClose and f_entryOk(ifvgDirection, ifvgLimit, ifvgOpen)
+bool ifvgMarketLeg = ifvgMarketOk and ((marketEntry or bothEntry) or (ifvgFlip and not ifvgLimitOk))
+bool ifvgLimitLeg = ifvgLimitOk and ((not marketEntry or bothEntry) or (ifvgFlip and not ifvgMarketOk))
 bool ifvgTake = ifvgMarketLeg or ifvgLimitLeg
 
 // An opposite swing break after a mark uses the same arm as any other break.
@@ -1157,10 +1304,14 @@ if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar an
     float bullArmTarget = na
     int bullArmAnchor = na
     bool bullArmUnder = false
-    if marketEntry or bothEntry
+    bool bullFlip = f_flipLiquidity(true) and f_keyOk(true) and not f_flipSpent(true)
+    if marketEntry or bothEntry or bullFlip
         [bullArmTarget, bullArmAnchor, bullArmUnder, bullArmTooClose] = f_target(bullArmClose, bullArmOpen, true)
-    bool swingArm = (marketEntry or not htfTooClose) and f_liquidityOk(true)
-    bool bothArm = bothEntry and f_liquidityOk(true) and (not htfTooClose or not bullArmTooClose)
+    bool bullMarketOk = not bullArmTooClose and f_entryOk(DIR_BULL, bullArmClose, bullArmOpen)
+    bool bullLimitOk = not htfTooClose and f_entryOk(DIR_BULL, swingHigh, low[1])
+    bool bullFlipTake = bullFlip and (bullMarketOk or bullLimitOk)
+    bool swingArm = (marketEntry or not htfTooClose) and f_liquidityOk(true) or bullFlipTake
+    bool bothArm = bothEntry and f_liquidityOk(true) and (not htfTooClose or not bullArmTooClose) or bullFlip and bullMarketOk and bullLimitOk
     if swingArm or bothArm
         armedDirection := DIR_BULL
         armedKind := kind
@@ -1183,7 +1334,7 @@ if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar an
         armedTime := time
         armedTargetTime := targetAnchor
         armedUnder := underMinRr
-        if marketEntry or bothEntry
+        if (marketEntry or bothEntry) and not bullFlipTake
             armedStop := open
             armedTarget := bullArmTarget
             armedTargetTime := bullArmAnchor
@@ -1194,8 +1345,15 @@ if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar an
                 strategy.entry("1C Long", strategy.long, qty = contracts)
                 marketOrderLive := true
                 array.set(pendingCreation, 0, bar_index)
-        armedSweepBar := firstBullSweepBar
-        armedSweepPrice := firstBullSweepPrice
+        if bullFlipTake and bullMarketOk
+            armedStop := open
+            armedTarget := bullArmTarget
+            armedTargetTime := bullArmAnchor
+            armedUnder := bullArmUnder
+            flipMarketLive := true
+        armedOpposingSweep := bullFlipTake
+        armedSweepBar := bullFlipTake ? firstBearSweepBar : firstBullSweepBar
+        armedSweepPrice := bullFlipTake ? firstBearSweepPrice : firstBullSweepPrice
 else if not sundaySkipped and not flippedThisBar and barstate.isconfirmed and swingHighOpen and not na(bullCloseAge) and bullCloseAge == swingBreachLookback
     structureDirection := DIR_BULL
     brokenHighBar := swingHighBar
@@ -1211,10 +1369,14 @@ if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar an
     float bearArmTarget = na
     int bearArmAnchor = na
     bool bearArmUnder = false
-    if marketEntry or bothEntry
+    bool bearFlip = f_flipLiquidity(false) and f_keyOk(false) and not f_flipSpent(false)
+    if marketEntry or bothEntry or bearFlip
         [bearArmTarget, bearArmAnchor, bearArmUnder, bearArmTooClose] = f_target(bearArmClose, bearArmOpen, false)
-    bool bearSwingArm = (marketEntry or not htfTooClose) and f_liquidityOk(false)
-    bool bearBothArm = bothEntry and f_liquidityOk(false) and (not htfTooClose or not bearArmTooClose)
+    bool bearMarketOk = not bearArmTooClose and f_entryOk(DIR_BEAR, bearArmClose, bearArmOpen)
+    bool bearLimitOk = not htfTooClose and f_entryOk(DIR_BEAR, swingLow, high[1])
+    bool bearFlipTake = bearFlip and (bearMarketOk or bearLimitOk)
+    bool bearSwingArm = (marketEntry or not htfTooClose) and f_liquidityOk(false) or bearFlipTake
+    bool bearBothArm = bothEntry and f_liquidityOk(false) and (not htfTooClose or not bearArmTooClose) or bearFlip and bearMarketOk and bearLimitOk
     if bearSwingArm or bearBothArm
         armedDirection := DIR_BEAR
         armedKind := kind
@@ -1237,7 +1399,7 @@ if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar an
         armedTime := time
         armedTargetTime := targetAnchor
         armedUnder := underMinRr
-        if marketEntry or bothEntry
+        if (marketEntry or bothEntry) and not bearFlipTake
             armedStop := open
             armedTarget := bearArmTarget
             armedTargetTime := bearArmAnchor
@@ -1247,8 +1409,15 @@ if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar an
                 strategy.entry("1C Short", strategy.short, qty = contracts)
                 marketOrderLive := true
                 array.set(pendingCreation, 0, bar_index)
-        armedSweepBar := firstBearSweepBar
-        armedSweepPrice := firstBearSweepPrice
+        if bearFlipTake and bearMarketOk
+            armedStop := open
+            armedTarget := bearArmTarget
+            armedTargetTime := bearArmAnchor
+            armedUnder := bearArmUnder
+            flipMarketLive := true
+        armedOpposingSweep := bearFlipTake
+        armedSweepBar := bearFlipTake ? firstBullSweepBar : firstBearSweepBar
+        armedSweepPrice := bearFlipTake ? firstBullSweepPrice : firstBearSweepPrice
 else if not sundaySkipped and not flippedThisBar and barstate.isconfirmed and swingLowOpen and not na(bearCloseAge) and bearCloseAge == swingBreachLookback
     structureDirection := DIR_BEAR
     brokenLowBar := swingLowBar
@@ -1293,6 +1462,8 @@ if patternSwing and not ifvgTake and continuationDir != 0 and barstate.isconfirm
         armedTime := time
         armedTargetTime := continuationAnchor
         armedUnder := continuationUnder
+        armedOpposingSweep := false
+        flipMarketLive := false
         armedSweepBar := continuationBull ? firstBullSweepBar : firstBearSweepBar
         armedSweepPrice := continuationBull ? firstBullSweepPrice : firstBearSweepPrice
         bool continuationTake = strategy.position_size == 0 and f_entryOk(continuationDir, continuationClose, continuationOpen)
@@ -1329,12 +1500,25 @@ if ifvgTake and not flippedThisBar
         formation.swingStop := ifvgOpen
         formation.swingTarget := ifvgLimitTarget
         formation.swingLimitWaiting := true
-    formation.sweepBar := ifvgBull ? firstBullSweepBar : firstBearSweepBar
-    formation.sweepPrice := ifvgBull ? firstBullSweepPrice : firstBearSweepPrice
+    bool ifvgOpposing = ifvgBull ? ifvgBullFlip : ifvgBearFlip
+    formation.opposingSweep := ifvgOpposing
+    formation.sweepBar := ifvgOpposing ? (ifvgBull ? firstBearSweepBar : firstBullSweepBar) : (ifvgBull ? firstBullSweepBar : firstBearSweepBar)
+    formation.sweepPrice := ifvgOpposing ? (ifvgBull ? firstBearSweepPrice : firstBullSweepPrice) : (ifvgBull ? firstBullSweepPrice : firstBearSweepPrice)
     formation.opposingSwing := ifvgBull ? swingLow : swingHigh
     if f_store(formation)
         f_labelFirstSweep(formation)
-        f_show(formation, true)
+        if ifvgOpposing
+            f_show(formation, false)
+            f_flipOrder(formation)
+            int spentNow = f_flipSpendSide(formation)
+            if spentNow != 0
+                flipSpentSide := spentNow
+                flipSpentCandle := spentNow == DIR_BULL ? bullSweepCandle : bearSweepCandle
+        if not ifvgOpposing and f_oppositeOpen(formation.direction)
+            f_show(formation, false)
+            f_replaceOrder(formation)
+        if not ifvgOpposing and not f_oppositeOpen(formation.direction)
+            f_show(formation, true)
 
 // The candle that leaves the gap is not a fill. A later bar that trades into
 // the gap or the order block marks that zone touched.
