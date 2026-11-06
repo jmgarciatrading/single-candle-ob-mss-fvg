@@ -1,0 +1,66 @@
+Single Candle OB + MSS + FVG, PyneCore run
+Date: 2026-11-06
+Pattern check on the fitted sample. No gate was retuned.
+
+Script: Single_Candle_OB_MSS_FVG.pine and Single_Candle_OB_MSS_FVG_Strategy.pine at af0161a
+Compiler: PyneCore, workdir /home/vesper/.local/share/pynecore/workdir
+Compiled to scripts/Single_Candle_OB_MSS_FVG.py and scripts/Single_Candle_OB_MSS_FVG_Strategy.py
+UDT field suffixes were stripped in those workdir files before the runs.
+Those compiled files stay out of this repository.
+
+Data: mes-front.ohlcv, the unadjusted front-month series of the fitted sample.
+Window: 2026-05-01 through 2026-10-30. Chart timeframe 5.
+pointvalue is 1, so the figures below are points, not MES dollars.
+This series is not the back-adjusted lab book.
+
+Close Location 0, Timeframe Target 4H, Min RR 2, Max Target 14, Target Swing Length 6
+Liquidity Timeframe 4H, Key Level Off, Liquidity Lookback 1, VWAP Chase off
+Structure window 09:30-16:00 America/New_York, minutes 0-60, Skip Sundays off
+Entry Model Market at close
+Entry From 10:05, Min Range 8, Long Extension 22, Max Stop 30
+Hold Winner on, Flat At 15:55 on, Contracts 1, commission 0
+
+Pattern was the only input that changed between the three strategy runs.
+The default run is Pattern OB + MSS + FVG.
+It matches the stage-1 run in strategy-runs/pynecore/2026-11-06.txt on this same file:
+26 trades, net -126.25, profit factor 0.381, drawdown 170.75.
+
+OB + iFVG marks one candle that is the order block and inverts a fair value gap.
+It does not wait for a second gap. The market fill is not closed as unconfirmed.
+Both orders a candle that qualifies for both patterns once, as the iFVG.
+
+The indicator ran with Pattern OB + iFVG. Its viz NDJSON has 35943 bars.
+Display Mode is Latest. The final frame has no box, line, or label.
+The OB + iFVG strategy viz has 35943 bars. Its final frame has 5 lines and 5 labels,
+all reading 4H Sweep, and no box.
+
+                 OB + iFVG, fitted sample, unadjusted, points
+Trades           67
+Net              69.00
+Profit factor    1.185
+Drawdown         153.75
+Worst loss       -23.50
+Without the best trade  -12.50
+First half / second half  111.75 / -42.75
+Trades of 80 points or more  1
+
+26 wins, 41 losses, 0 scratches. No trade is still open.
+The first half is entries before 2026-08-01 New York.
+The trade of 80 points or more is the 2026-06-09 14:10 UTC short,
+entry 7437.00, exit 15:25 UTC at 7355.50, +81.50.
+That trade is absent from the default run on this file.
+
+                 Both, fitted sample, unadjusted, points
+Trades           76
+Net              -7.00
+Profit factor    0.985
+Drawdown         211.75
+Worst loss       -23.50
+Without the best trade  -88.50
+First half / second half  73.25 / -80.25
+Trades of 80 points or more  1
+
+28 wins, 48 losses, 0 scratches. No trade is still open.
+The same 2026-06-09 short is the trade of 80 points or more.
+Both is not the sum of the default book and the OB + iFVG book.
+An open trade still blocks the other pattern.
