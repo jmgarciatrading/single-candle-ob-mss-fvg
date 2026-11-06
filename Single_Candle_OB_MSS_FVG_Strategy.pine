@@ -113,7 +113,7 @@ const string PATTERN_IFVG = "OB + iFVG"
 const string PATTERN_BOTH = "Both"
 string patternChoice = input.string(PATTERN_SWING, "Pattern",
      options = [PATTERN_SWING, PATTERN_IFVG, PATTERN_BOTH], group = GRP_ENTRY,
-     tooltip = "OB + MSS + FVG is the swing break. The next candle has to leave that swing inside a body gap. OB + iFVG is one candle that is the order block and inverts a fair value gap. A bullish candle closes above a bearish gap and its body covers that gap. A bearish candle closes below a bullish gap and its body covers that gap. The gap comes from an earlier candle, no more than 30 candles back. An earlier close through it does not leave it for this candle. Both allows either setup. A candle that qualifies as both draws once, as the iFVG. The same liquidity sweep, window, Entry From, Min Range, Long Extension, Max Stop, Close Location, and Min RR apply. Market at close sends the order on this candle's close and the stop is its open, attached on the next candle. The fill is not closed for a missing second gap. Limit at the swing rests on the near edge of the inverted gap. The stop is that same open. Both keeps each leg and its own Min RR.")
+     tooltip = "OB + MSS + FVG is the swing break. The next candle has to leave that swing inside a body gap. OB + iFVG is one candle that is the order block and inverts a fair value gap. A bullish candle closes above a bearish gap and its body covers that gap. A bearish candle closes below a bullish gap and its body covers that gap. The gap comes from an earlier candle, no more than 10 candles back. An earlier close through it does not leave it for this candle. Both allows either setup. A candle that qualifies as both draws once, as the iFVG. The same liquidity sweep, window, Entry From, Min Range, Long Extension, Max Stop, Close Location, and Min RR apply. Market at close sends the order on this candle's close and the stop is its open, attached on the next candle. The fill is not closed for a missing second gap. Limit at the swing rests on the near edge of the inverted gap. The stop is that same open. Both keeps each leg and its own Min RR.")
 bool patternSwing = patternChoice == PATTERN_SWING or patternChoice == PATTERN_BOTH
 bool patternIfvg = patternChoice == PATTERN_IFVG or patternChoice == PATTERN_BOTH
 int entryFromHour = input.int(10, "Entry From", minval = 0, maxval = 23, group = GRP_ENTRY, inline = "entryfrom",
@@ -982,7 +982,7 @@ f_ifvgBarsBack(bool bullish) =>
     float bodyLow = math.min(open, close)
     bool colorOk = bullish ? close > open : close < open
     if colorOk
-        for barsBack = 1 to 30
+        for barsBack = 1 to 10
             float gapTop = bullish ? f_bearGapTop(barsBack) : f_bullGapTop(barsBack)
             float gapBottom = bullish ? f_bearGapBottom(barsBack) : f_bullGapBottom(barsBack)
             bool covered = not na(gapTop) and not na(gapBottom) and bodyLow <= gapBottom and bodyHigh >= gapTop
