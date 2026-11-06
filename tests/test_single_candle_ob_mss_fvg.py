@@ -31,6 +31,7 @@ class Event:
     level: float
     fvg_top: float
     fvg_bottom: float
+    flip: bool = False
 
 
 @dataclass
@@ -144,62 +145,50 @@ def replay(bars: list[Bar], swing_length: int = 1, minutes: list[int] | None = N
             minute_of_hour = 0 if minutes is None else minutes[index] % 60
             minute_ok = minute_start <= minute_of_hour < minute_end
             allowed = in_window(minutes[index], start, end) and minute_ok
+        if active is not None:
+            traded = bar.high >= active["target"] if active["direction"] == 1 else bar.low <= active["target"]
+            if traded:
+                active = None
         if pending is not None and index == pending["bar"] + 1:
             level = pending["level"]
             candle3_body_high = body_high(bar)
             candle3_body_low = body_low(bar)
+            flip_now = active is not None and active["direction"] != pending["direction"]
             if pending["direction"] == 1 and level > pending["c1_body_high"] and level < candle3_body_low and bar.low > level:
                 events.append(Event(
                     1, pending["kind"], pending["bar"], pending["bar"],
                     pending["bar"] - 1, index, level,
                     candle3_body_low, pending["c1_body_high"],
+                    flip_now,
                 ))
+                arm = bars[pending["bar"]]
+                risk = abs(arm.close - arm.open)
                 active = {
                     "direction": 1,
                     "high": pending["high"],
                     "low": pending["low"],
                     "index": pending["bar"],
+                    "target": arm.close + risk * 2,
                 }
             elif pending["direction"] == -1 and level < pending["c1_body_low"] and level > candle3_body_high and bar.high < level:
                 events.append(Event(
                     -1, pending["kind"], pending["bar"], pending["bar"],
                     pending["bar"] - 1, index, level,
                     pending["c1_body_low"], candle3_body_high,
+                    flip_now,
                 ))
+                arm = bars[pending["bar"]]
+                risk = abs(arm.close - arm.open)
                 active = {
                     "direction": -1,
                     "high": pending["high"],
                     "low": pending["low"],
                     "index": pending["bar"],
+                    "target": arm.close - risk * 2,
                 }
             pending = None
+        # A close back through an old mark does not invert it.
         flipped_this_bar = False
-        if active is not None and index > active["index"] + 1:
-            bull_flip = active["direction"] == -1 and bar.close > bar.open and bar.close > active["high"]
-            bear_flip = active["direction"] == 1 and bar.close < bar.open and bar.close < active["low"]
-            if bull_flip or bear_flip:
-                flip_direction = 1 if bull_flip else -1
-                flip_kind = "BOS" if direction == flip_direction else "MSS"
-                events.append(Event(
-                    flip_direction, flip_kind, index, active["index"],
-                    active["index"], index,
-                    active["high"] if flip_direction == 1 else active["low"],
-                    bar.high, bar.low,
-                ))
-                direction = flip_direction
-                if flip_direction == 1 and swing_high_open and bar.close > swing_high:
-                    broken_high_bar = swing_high_bar
-                    swing_high_open = False
-                elif flip_direction == -1 and swing_low_open and bar.close < swing_low:
-                    broken_low_bar = swing_low_bar
-                    swing_low_open = False
-                active = {
-                    "direction": flip_direction,
-                    "high": bar.high,
-                    "low": bar.low,
-                    "index": index,
-                }
-                flipped_this_bar = True
         bullish_break = (
             previous is not None and swing_high_open and bar.close > swing_high
             and previous.close <= swing_high and bar.close > bar.open
@@ -325,19 +314,19 @@ class SingleCandleTests(unittest.TestCase):
         bear_event = replay(inside_low)[0]
         self.assertEqual(bear_event.index, 4)
 
-    def test_close_through_marks_the_opposite_candle(self):
+    def test_close_through_does_not_invert_the_mark(self):
         flipped = bullish_break() + [bullish_confirm(), Bar(14.6, 14.9, 10.8, 11.0)]
         events = replay(flipped)
-        self.assertEqual([event.direction for event in events], [1, -1])
-        self.assertEqual(events[1].index, 6)
+        self.assertEqual([event.direction for event in events], [1])
+        self.assertFalse(events[0].flip)
         wick = bullish_break() + [bullish_confirm(), Bar(14.6, 14.9, 10.8, 13.8)]
         self.assertEqual(len(replay(wick)), 1)
         same_color = bullish_break() + [bullish_confirm(), Bar(11.0, 11.5, 10.5, 11.2)]
         self.assertEqual(len(replay(same_color)), 1)
         bullish_flip = bearish_break() + [bearish_confirm(), Bar(7.8, 11.2, 7.6, 11.0)]
         bullish_events = replay(bullish_flip)
-        self.assertEqual([event.direction for event in bullish_events], [-1, 1])
-        self.assertEqual(bullish_events[1].index, 6)
+        self.assertEqual([event.direction for event in bullish_events], [-1])
+        self.assertFalse(bullish_events[0].flip)
 
     def test_same_color_candle_before_the_break_still_marks(self):
         bars = bullish_break()
@@ -357,6 +346,8 @@ class SingleCandleTests(unittest.TestCase):
         ]
         events = replay(bars)
         self.assertEqual([event.kind for event in events], ["MSS", "BOS"])
+        self.assertFalse(events[0].flip)
+        self.assertFalse(events[1].flip)
         self.assertEqual(events[1].index, 10)
         self.assertEqual(events[1].level, 16.5)
 
@@ -371,8 +362,43 @@ class SingleCandleTests(unittest.TestCase):
         ]
         events = replay(bars)
         self.assertEqual(events[0].kind, "MSS")
+        self.assertFalse(events[0].flip)
         self.assertEqual(events[-1].direction, -1)
         self.assertEqual(events[-1].kind, "MSS")
+        self.assertTrue(events[-1].flip)
+
+    def test_opposite_of_a_printed_setup_is_a_flip(self):
+        bars = bearish_break() + [
+            bearish_confirm(),
+            Bar(7.8, 9.5, 8.4, 9.2),
+            Bar(9.2, 9.4, 8.0, 8.8),
+            Bar(8.8, 9.6, 8.6, 9.3),
+            Bar(9.3, 11.0, 9.2, 10.5),
+            Bar(10.6, 12.0, 10.4, 11.5),
+        ]
+        events = replay(bars)
+        self.assertEqual(events[0].direction, -1)
+        self.assertFalse(events[0].flip)
+        self.assertEqual(events[-1].direction, 1)
+        self.assertTrue(events[-1].flip)
+
+    def test_a_traded_target_ends_the_flip_reference(self):
+        # The bearish displacement is 10.6 to 8.6, so two times that risk is 4.6.
+        # Thursday 5 Nov 2026 19:00 is the same shape: the prior short's target
+        # had already traded, and the bullish box is a normal setup.
+        bars = bearish_break() + [
+            bearish_confirm(),
+            Bar(7.8, 9.5, 4.0, 9.2),
+            Bar(9.2, 9.4, 8.0, 8.8),
+            Bar(8.8, 9.6, 8.6, 9.3),
+            Bar(9.3, 11.0, 9.2, 10.5),
+            Bar(10.6, 12.0, 10.4, 11.5),
+        ]
+        events = replay(bars)
+        self.assertEqual(events[0].direction, -1)
+        self.assertFalse(events[0].flip)
+        self.assertEqual(events[-1].direction, 1)
+        self.assertFalse(events[-1].flip)
 
     def test_wick_through_the_swing_is_rejected(self):
         bars = bullish_break()
@@ -411,6 +437,7 @@ class SingleCandleTests(unittest.TestCase):
         ]
         events = replay(bars)
         self.assertEqual([event.kind for event in events], ["BOS"])
+        self.assertFalse(events[0].flip)
         self.assertEqual(events[0].index, 10)
         self.assertEqual(events[0].level, 15.5)
 
@@ -506,8 +533,8 @@ class PineSourceTests(unittest.TestCase):
         self.assertIn("close < swingLow and close[1] >= swingLow and close < open and f_committed(false)", self.source)
         self.assertIn('input.float(0, "Close Location"', self.source)
         self.assertIn("f_committed(bool bullish)", self.source)
-        self.assertIn("bool flipCommitted = (closedBullZone and f_committed(false)) or (closedBearZone and f_committed(true))", self.source)
-        self.assertIn("if flipCommitted", self.source)
+        self.assertNotIn("bool flipCommitted", self.source)
+        self.assertNotIn("flipFormation", self.source)
         self.assertIn("not vwapChased and f_keyOk(continuationBull) and f_committed(continuationBull)", self.source)
         self.assertIn("close < swingLow and close[1] >= swingLow and close < open", self.source)
         self.assertNotIn("close > high[2]", self.source)
@@ -588,8 +615,9 @@ class PineSourceTests(unittest.TestCase):
         self.assertIn("f_inWindowAt(int t)", self.source)
         self.assertNotIn("f_fillWindow()", self.source)
         self.assertIn("bool confirmWindow = marketEntry or f_inWindow()", self.source)
-        self.assertIn("bool flipWindow = f_inWindow()", self.source)
-        self.assertIn("if flipTooClose or not flipWindow", self.source)
+        self.assertNotIn("bool flipWindow = f_inWindow()", self.source)
+        self.assertNotIn("bool flipBlocked = flipTooClose or not flipWindow", self.source)
+        self.assertNotIn("if flipTooClose or not flipWindow", self.source)
         self.assertNotIn("f_inWindow() and f_fillWindow()", self.source)
         self.assertIn('liquiditySelected + " Sweep"', self.source)
         self.assertIn('keySelected + " Sweep"', self.source)
@@ -604,36 +632,52 @@ class PineSourceTests(unittest.TestCase):
         self.assertIn("firstBearSweepBar := bar_index", self.source)
         self.assertIn("bullSweepCandle != closedLiqTime", self.source)
         self.assertIn("f_labelFirstSweep(formation)", self.source)
-        self.assertIn("f_labelFirstSweep(flipFormation)", self.source)
+        self.assertNotIn("f_labelFirstSweep(flipFormation)", self.source)
         self.assertNotIn("f_labelFirstSweep(continuationFormation)", self.source)
         self.assertNotIn("bullContSweepBar : bearContSweepBar", self.source)
         self.assertIn("bar_index - sweepBar <= liquidityLookback", self.source)
         self.assertIn("(marketEntry or not htfTooClose) and f_liquidityOk(true)", self.source)
         self.assertIn("(marketEntry or not htfTooClose) and f_liquidityOk(false)", self.source)
         self.assertIn("armedStop := open", self.source)
-        self.assertIn("marketEntry ? open : (flipDirection == DIR_BULL ? low[1] : high[1])", self.source)
-        self.assertIn("if flipLiquidity", self.source)
+        self.assertNotIn("marketEntry ? open : (flipDirection == DIR_BULL ? low[1] : high[1])", self.source)
+        self.assertNotIn("if flipLiquidity", self.source)
         self.assertNotIn("if flipTooClose or not flipLiquidity", self.source)
         self.assertIn('input.int(2, "Min RR"', self.source)
         self.assertIn("if minRr > 0 and (na(reward) or reward < minRr * risk)", self.source)
         self.assertIn("htfTooClose := true", self.source)
-        self.assertIn("if flipTooClose", self.source)
-        self.assertIn("f_deleteVisuals(zone)", self.source)
+        self.assertNotIn("if flipTooClose", self.source)
+        self.assertIn("f_present(formation, asFlip)", self.source)
+        self.assertIn("printedDirection != 0 and formation.direction != printedDirection", self.source)
+        self.assertIn("printedDirection := formation.direction", self.source)
+        self.assertIn("printedTarget := useTarget", self.source)
+        self.assertIn("printedDirection == DIR_BULL ? high >= printedTarget : low <= printedTarget", self.source)
+        self.assertIn("printedDirection := 0", self.source)
+        self.assertNotIn("armedFlip", self.source)
+        self.assertNotIn("higherLow", self.source)
+        self.assertNotIn("lowerHigh", self.source)
+        self.assertIn("f_grey(previous)", self.source)
+        self.assertNotIn("f_deleteVisuals(zone)", self.source)
+        self.assertNotIn("f_grey(zone)", self.source)
+        self.assertIn("label flipLabel = na", self.source)
+        self.assertIn('label.new(formation.creationBar, flipY, "flip"', self.source)
+        self.assertIn("previous.isVisible := false", self.source)
+        self.assertIn("formation.flippedBar == bar_index", self.source)
+        self.assertIn("box.set_border_color(formation.obBox, color.gray)", self.source)
         self.assertIn("f_target(swingHigh, low[1], true)", self.source)
         self.assertIn("f_target(swingLow, high[1], false)", self.source)
-        self.assertIn("f_target(flipLevel, flipStop, flipDirection == DIR_BULL)", self.source)
+        self.assertNotIn("f_target(flipLevel, flipStop, flipDirection == DIR_BULL)", self.source)
         self.assertNotIn("f_target(close,", self.source)
         self.assertIn("float level = marketEntry ? marketPrice : swingLevel", self.source)
         self.assertIn("float displacementClose = close[1]", self.source)
         self.assertIn("float useLevel = marketEntry ? displacementClose : resolvedLevel", self.source)
         self.assertIn("f_resolveEntry(armedLevel, armedStop, armedTarget, armedTargetTime, armedUnder, false, armedDirection == DIR_BULL, displacementClose)", self.source)
-        self.assertIn("float useLevel = marketEntry ? close : resolvedLevel", self.source)
-        self.assertIn("close < zone.impulseLow", self.source)
-        self.assertIn("close > zone.impulseHigh", self.source)
+        self.assertNotIn("float useLevel = marketEntry ? close : resolvedLevel", self.source)
+        self.assertNotIn("close < zone.impulseLow", self.source)
+        self.assertNotIn("close > zone.impulseHigh", self.source)
         self.assertIn("if not sundaySkipped and not flippedThisBar", self.source)
         self.assertIn("armedStop := low[1]", self.source)
         self.assertIn("armedStop := high[1]", self.source)
-        self.assertIn("flipDirection == DIR_BULL ? low[1] : high[1]", self.source)
+        self.assertNotIn("flipDirection == DIR_BULL ? low[1] : high[1]", self.source)
         self.assertIn("line.new(formation.creationBar - 1, formation.stopPrice, formation.creationBar + 1,", self.source)
         self.assertIn("line.new(formation.creationBar - 1, formation.level, formation.creationBar + 1,", self.source)
         self.assertIn("if not na(formation.level)", self.source)
@@ -694,8 +738,8 @@ class StrategySourceTests(unittest.TestCase):
         self.assertIn("close < swingLow and close[1] >= swingLow and close < open and f_committed(false)", self.source)
         self.assertIn('input.float(0, "Close Location"', self.source)
         self.assertIn("f_committed(bool bullish)", self.source)
-        self.assertIn("bool flipCommitted = (closedBullZone and f_committed(false)) or (closedBearZone and f_committed(true))", self.source)
-        self.assertIn("if flipCommitted", self.source)
+        self.assertNotIn("bool flipCommitted", self.source)
+        self.assertNotIn("flipFormation", self.source)
         self.assertIn("not vwapChased and f_keyOk(continuationBull) and f_committed(continuationBull)", self.source)
         self.assertIn('strategy.entry("1C Long", strategy.long, qty = contracts, limit = formation.level)', self.source)
         self.assertIn('strategy.entry("1C Short", strategy.short, qty = contracts, limit = formation.level)', self.source)
@@ -711,7 +755,7 @@ class StrategySourceTests(unittest.TestCase):
         self.assertIn("float displacementClose = close[1]", self.source)
         self.assertIn("float useLevel = marketEntry ? displacementClose : resolvedLevel", self.source)
         self.assertIn("f_resolveEntry(armedLevel, armedStop, armedTarget, armedTargetTime, armedUnder, false, armedDirection == DIR_BULL, displacementClose)", self.source)
-        self.assertIn("float useLevel = marketEntry ? close : resolvedLevel", self.source)
+        self.assertNotIn("float useLevel = marketEntry ? close : resolvedLevel", self.source)
         self.assertNotIn("f_target(close,", self.source)
         self.assertIn('input.int(2, "Swing Breach Lookback"', self.source)
         self.assertIn("armedLevel > armedCandle1BodyHigh and armedLevel < candle3BodyLow and low > armedLevel", self.source)
@@ -771,8 +815,8 @@ class StrategySourceTests(unittest.TestCase):
         self.assertIn("f_inWindowAt(int t)", self.source)
         self.assertNotIn("f_fillWindow()", self.source)
         self.assertIn("bool confirmWindow = marketEntry or f_inWindow()", self.source)
-        self.assertIn("bool flipWindow = f_inWindow()", self.source)
-        self.assertIn("if flipTooClose or not flipWindow", self.source)
+        self.assertNotIn("bool flipWindow = f_inWindow()", self.source)
+        self.assertNotIn("if flipTooClose or not flipWindow", self.source)
         self.assertNotIn("f_inWindow() and f_fillWindow()", self.source)
         self.assertIn('liquiditySelected + " Sweep"', self.source)
         self.assertIn('keySelected + " Sweep"', self.source)
@@ -787,14 +831,14 @@ class StrategySourceTests(unittest.TestCase):
         self.assertIn("firstBearSweepBar := bar_index", self.source)
         self.assertIn("bullSweepCandle != closedLiqTime", self.source)
         self.assertIn("f_labelFirstSweep(formation)", self.source)
-        self.assertIn("f_labelFirstSweep(flipFormation)", self.source)
+        self.assertNotIn("f_labelFirstSweep(flipFormation)", self.source)
         self.assertNotIn("f_labelFirstSweep(continuationFormation)", self.source)
         self.assertNotIn("bullContSweepBar : bearContSweepBar", self.source)
         self.assertIn("(marketEntry or not htfTooClose) and f_liquidityOk(true)", self.source)
         self.assertIn("(marketEntry or not htfTooClose) and f_liquidityOk(false)", self.source)
         self.assertIn("armedStop := open", self.source)
-        self.assertIn("marketEntry ? open : (flipDirection == DIR_BULL ? low[1] : high[1])", self.source)
-        self.assertIn("if flipLiquidity", self.source)
+        self.assertNotIn("marketEntry ? open : (flipDirection == DIR_BULL ? low[1] : high[1])", self.source)
+        self.assertNotIn("if flipLiquidity", self.source)
         self.assertNotIn("if flipTooClose or not flipLiquidity", self.source)
         self.assertIn('input.bool(false, "Skip Sundays"', self.source)
         self.assertIn("dayofweek.sunday", self.source)
@@ -802,8 +846,8 @@ class StrategySourceTests(unittest.TestCase):
         self.assertIn("not sundaySkipped and not flippedThisBar", self.source)
         self.assertIn("if minRr > 0 and (na(reward) or reward < minRr * risk)", self.source)
         self.assertIn("bool targetOk = minRr > 0 ? hasTarget and targetSide : not hasTarget or targetSide", self.source)
-        self.assertIn("if flipTooClose", self.source)
-        self.assertIn("if strategy.position_size == 0 and zone.creationBar == array.get(pendingCreation, 0)", self.source)
+        self.assertNotIn("if flipTooClose", self.source)
+        self.assertNotIn("if strategy.position_size == 0 and zone.creationBar == array.get(pendingCreation, 0)", self.source)
         self.assertIn("if stopTouched", self.source)
         self.assertIn("not entryTouched and strategy.position_size == 0 and formation.creationBar == array.get(pendingCreation, 0)", self.source)
         self.assertNotIn("pendingCreationBar :=", self.source)

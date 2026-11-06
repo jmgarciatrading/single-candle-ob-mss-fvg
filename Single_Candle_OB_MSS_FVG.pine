@@ -173,9 +173,16 @@ type Formation
     label sweepTag = na
     line keySweepLine = na
     label keySweepTag = na
+    label flipLabel = na
+    int flippedBar = na
 
 var array<Formation> formations = array.new<Formation>()
 var int structureDirection = 0
+// Direction of the last setup that was drawn and whose target has not traded.
+// A later setup in the opposite direction is the flip. Once that target trades,
+// the next setup is a new normal setup.
+var int printedDirection = 0
+var float printedTarget = na
 
 f_inWindowAt(int t) =>
     if not useTimeWindow
@@ -252,6 +259,7 @@ f_deleteVisuals(Formation formation) =>
         line.delete(formation.swingTargetLine)
         f_releaseMark(formation.sweepLine, formation.sweepTag)
         f_releaseMark(formation.keySweepLine, formation.keySweepTag)
+        label.delete(formation.flipLabel)
         formation.obBox := na
         formation.fvgBox := na
         formation.levelLine := na
@@ -266,7 +274,47 @@ f_deleteVisuals(Formation formation) =>
         formation.sweepTag := na
         formation.keySweepLine := na
         formation.keySweepTag := na
+        formation.flipLabel := na
         formation.isVisible := false
+
+f_greyLine(line markLine) =>
+    if not na(markLine)
+        line.set_color(markLine, color.gray)
+
+f_greyLabel(label markLabel) =>
+    if not na(markLabel)
+        label.set_color(markLabel, color.gray)
+        label.set_textcolor(markLabel, color.white)
+
+// The old mark stays on the chart. Its box, lines, and sweep turn grey.
+f_grey(Formation formation) =>
+    if formation.isVisible
+        if not na(formation.obBox)
+            box.set_border_color(formation.obBox, color.gray)
+            box.set_bgcolor(formation.obBox, color.new(color.gray, 82))
+        if not na(formation.fvgBox)
+            box.set_border_color(formation.fvgBox, color.gray)
+            box.set_bgcolor(formation.fvgBox, color.new(color.gray, 82))
+        f_greyLine(formation.levelLine)
+        f_greyLabel(formation.levelLabel)
+        f_greyLine(formation.stopLine)
+        f_greyLine(formation.targetLine)
+        f_greyLine(formation.entryLine)
+        f_greyLine(formation.swingEntryLine)
+        f_greyLine(formation.swingStopLine)
+        f_greyLine(formation.swingTargetLine)
+        f_greyLine(formation.sweepLine)
+        f_greyLabel(formation.sweepTag)
+        f_greyLine(formation.keySweepLine)
+        f_greyLabel(formation.keySweepTag)
+        f_greyLabel(formation.flipLabel)
+
+f_markFlip(Formation formation) =>
+    float flipY = formation.direction == DIR_BULL ? formation.impulseHigh : formation.impulseLow
+    color flipColor = formation.direction == DIR_BULL ? bullObColor : bearObColor
+    formation.flipLabel := label.new(formation.creationBar, flipY, "flip",
+         xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_left,
+         color = flipColor, textcolor = color.white, size = size.small)
 
 f_reclaimIndex() =>
     int result = -1
@@ -339,6 +387,25 @@ f_show(Formation formation) =>
     f_render(formation)
     if marketEntry or formation.atClose or formation.closeLines
         formation.entryMitigated := true
+
+// A direction flip keeps the previous mark in grey. Latest would otherwise delete it.
+f_present(Formation formation, bool asFlip) =>
+    int hiddenIndex = -1
+    int count = array.size(formations)
+    if asFlip and count > 1
+        for index = count - 2 to 0
+            Formation previous = array.get(formations, index)
+            if hiddenIndex == -1 and previous.direction != formation.direction and previous.isVisible
+                f_grey(previous)
+                previous.flippedBar := bar_index
+                previous.isVisible := false
+                hiddenIndex := index
+    f_show(formation)
+    if hiddenIndex >= 0
+        Formation restored = array.get(formations, hiddenIndex)
+        restored.isVisible := true
+    if asFlip
+        f_markFlip(formation)
 
 // Closed target-timeframe candles. A pivot needs Target Swing Length bars on
 // each side, so it is stored only after those later candles have closed.
@@ -748,7 +815,6 @@ var bool armedMarketLive = false
 var bool armedEntryOk = false
 var int armedSweepBar = na
 var float armedSweepPrice = na
-
 if not na(pivotHigh)
     swingHigh := pivotHigh
     swingHighBar := bar_index - swingLength
@@ -793,6 +859,12 @@ bool bearishBreakNow = barstate.isconfirmed and swingLowOpen and close < swingLo
 // leaves the setup undrawn. Skip Sundays leaves the swing unused and leaves the
 // current mark in place.
 bool sundaySkipped = skipSundays and dayofweek(time, timeZone) == dayofweek.sunday
+// A traded target finishes that setup. It is no longer the flip reference.
+if barstate.isconfirmed and printedDirection != 0 and not na(printedTarget)
+    bool printedTargetHit = printedDirection == DIR_BULL ? high >= printedTarget : low <= printedTarget
+    if printedTargetHit
+        printedDirection := 0
+        printedTarget := na
 bool formedThisBar = false
 if barstate.isconfirmed and armedDirection != 0
     if bar_index == armedBar + 1 and not sundaySkipped
@@ -835,7 +907,10 @@ if barstate.isconfirmed and armedDirection != 0
                     formation.opposingSwing := armedDirection == DIR_BULL ? swingLow : swingHigh
                     if f_store(formation)
                         if confirmShow
-                            f_show(formation)
+                            bool asFlip = printedDirection != 0 and formation.direction != printedDirection
+                            f_present(formation, asFlip)
+                            printedDirection := formation.direction
+                            printedTarget := primaryTarget
                             f_labelFirstSweep(formation)
                         formedThisBar := true
             else if not useTooClose
@@ -850,96 +925,26 @@ if barstate.isconfirmed and armedDirection != 0
                 formation.opposingSwing := armedDirection == DIR_BULL ? swingLow : swingHigh
                 if f_store(formation)
                     if confirmShow
-                        f_show(formation)
+                        bool asFlip = printedDirection != 0 and formation.direction != printedDirection
+                        f_present(formation, asFlip)
+                        printedDirection := formation.direction
+                        printedTarget := useTarget
                         f_labelFirstSweep(formation)
                     formedThisBar := true
     armedDirection := 0
     armedMarketLive := false
 
-// A close through the marked candle, in the opposite direction, is the new
-// mark. The fair value gap does not apply. The time window does. Min RR does.
-// Close Location does. A close inside that fraction is not a flip, so the
-// working mark stays. A liquidity sweep outside the lookback means this flip
-// is not considered, so the working mark stays. Below Min RR, or outside the
-// window, the old mark is removed and nothing is drawn. A wick through the
-// candle does not. Skip Sundays leaves the mark in place.
+// A close back through an old mark does not invert that mark and does not
+// draw a setup. A flip is the next single-candle setup that prints in the
+// opposite direction while the previous setup's target has not traded. Once
+// that target trades, the next setup is a normal setup. A later setup in the
+// same direction is a normal setup and has no flip label. When a flip is
+// drawn, the old box, its lines, and its sweep turn grey and stay. The new
+// mark carries a flip label. The box still waits for the next candle to leave
+// the broken swing inside the body gap.
 bool flippedThisBar = false
-if barstate.isconfirmed and not sundaySkipped and array.size(formations) > 0
-    Formation zone = array.get(formations, array.size(formations) - 1)
-    bool brokeOpposingSwing = (zone.direction == DIR_BEAR and bullishBreakNow) or (zone.direction == DIR_BULL and bearishBreakNow)
-    bool closedBullZone = zone.direction == DIR_BULL and not zone.flipped and bar_index > zone.creationBar + 1 and
-         close < open and close < zone.impulseLow and not brokeOpposingSwing
-    bool closedBearZone = zone.direction == DIR_BEAR and not zone.flipped and bar_index > zone.creationBar + 1 and
-         close > open and close > zone.impulseHigh and not brokeOpposingSwing
-    bool flipCommitted = (closedBullZone and f_committed(false)) or (closedBearZone and f_committed(true))
-    if flipCommitted
-        int flipDirection = closedBullZone ? DIR_BEAR : DIR_BULL
-        bool flipLiquidity = f_liquidityOk(flipDirection == DIR_BULL)
-        if flipLiquidity
-            int flipKind = structureDirection == flipDirection ? KIND_BOS : KIND_MSS
-            float flipLevel = na
-            int flipSwingBar = na
-            if flipDirection == DIR_BULL and not na(swingHigh) and close > swingHigh
-                flipLevel := swingHigh
-                flipSwingBar := swingHighBar
-                if swingHighOpen
-                    brokenHighBar := swingHighBar
-            else if flipDirection == DIR_BEAR and not na(swingLow) and close < swingLow
-                flipLevel := swingLow
-                flipSwingBar := swingLowBar
-                if swingLowOpen
-                    brokenLowBar := swingLowBar
-            float flipStop = marketEntry ? open : (flipDirection == DIR_BULL ? low[1] : high[1])
-            [swingTarget, swingAnchor, swingUnder, swingTooClose] = f_target(flipLevel, flipStop, flipDirection == DIR_BULL)
-            [resolvedLevel, useTarget, useAnchor, useUnder, flipTooClose] = f_resolveEntry(flipLevel, flipStop, swingTarget, swingAnchor, swingUnder, swingTooClose, flipDirection == DIR_BULL, close)
-            float useLevel = marketEntry ? close : resolvedLevel
-            bool limitTooClose = flipTooClose
-            float bothOpen = open
-            float bothClose = close
-            bool bothMarketTooClose = true
-            float bothMarketTarget = na
-            int bothMarketAnchor = na
-            bool bothMarketUnder = false
-            if bothEntry
-                [bothMarketTarget, bothMarketAnchor, bothMarketUnder, bothMarketTooClose] = f_target(bothClose, bothOpen, flipDirection == DIR_BULL)
-                flipTooClose := bothMarketTooClose and limitTooClose
-            bool marketLeg = bothEntry and not bothMarketTooClose
-            bool limitLeg = bothEntry and not limitTooClose
-            bool flipWindow = f_inWindow()
-            zone.flipped := true
-            structureDirection := flipDirection
-            Formation flipFormation = Formation.new(flipDirection, flipKind, bar_index, flipSwingBar, useLevel,
-                 zone.creationBar, zone.impulseHigh, zone.impulseLow, zone.creationBar, bar_index, high, low,
-                 false, false, false, high, low, flipStop, useTarget, time, useAnchor, useUnder, false,
-                 na, na, na, na, na, na, na)
-            flipFormation.sweepBar := flipDirection == DIR_BULL ? firstBullSweepBar : firstBearSweepBar
-            flipFormation.sweepPrice := flipDirection == DIR_BULL ? firstBullSweepPrice : firstBearSweepPrice
-            flipFormation.opposingSwing := flipDirection == DIR_BULL ? swingLow : swingHigh
-            if marketLeg
-                flipFormation.level := bothClose
-                flipFormation.stopPrice := bothOpen
-                flipFormation.targetPrice := bothMarketTarget
-                flipFormation.targetAnchorTime := bothMarketAnchor
-                flipFormation.underMinRr := bothMarketUnder
-                flipFormation.closeLines := true
-                if limitLeg
-                    flipFormation.swingLevel := useLevel
-                    flipFormation.swingStop := flipStop
-                    flipFormation.swingTarget := useTarget
-            bool flipShow = ((marketEntry or bothEntry) and f_entryOk(flipDirection, close, open)) or ((not marketEntry or bothEntry) and f_entryOk(flipDirection, useLevel, flipStop))
-            if flipTooClose or not flipWindow
-                f_deleteVisuals(zone)
-                f_store(flipFormation)
-            else if f_store(flipFormation)
-                if flipShow
-                    f_show(flipFormation)
-                    f_labelFirstSweep(flipFormation)
-                formedThisBar := true
-            flippedThisBar := true
 
-// An opposite swing break after a mark uses the same arm as any other break.
-// Liquidity Lookback has to pass on this candle. The box waits for the next
-// candle to leave the swing inside the body gap. Nothing is drawn here.
+// The box waits for the next candle. Nothing is drawn here.
 if not sundaySkipped and not flippedThisBar and bullishBreakNow and f_inWindow()
     int kind = structureDirection == DIR_BULL ? KIND_BOS : KIND_MSS
     structureDirection := DIR_BULL
@@ -1104,7 +1109,9 @@ if barstate.isconfirmed and formationCount > 0
         if bar_index > formation.creationBar + 1 and not formation.fvgMitigated and f_touched(formation.fvgTop, formation.fvgBottom)
             formation.fvgMitigated := true
         // A stop traded after the drawing candle hides the mark, including a stop after the entry.
-        if formation.isVisible and not na(formation.entryDrawnBar) and bar_index > formation.entryDrawnBar
+        // The flip candle turns this mark grey. That candle is not the stop that hides it.
+        bool flippedNow = not na(formation.flippedBar) and formation.flippedBar == bar_index
+        if formation.isVisible and not na(formation.entryDrawnBar) and bar_index > formation.entryDrawnBar and not flippedNow
             bool entryTouched = not na(formation.level) and high >= formation.level and low <= formation.level
             bool stopTouched = high >= formation.stopPrice and low <= formation.stopPrice
             bool swingOn = not na(formation.swingLevel) and not na(formation.swingStop)

@@ -1063,102 +1063,12 @@ if barstate.isconfirmed and armedDirection != 0
         marketOrderLive := false
     armedDirection := 0
 
-// A close through the marked candle, in the opposite direction, is the new
-// mark. The fair value gap does not apply. The time window does. Min RR does.
-// Close Location does. A close inside that fraction is not a flip, so the
-// working mark and its limit stay. A liquidity sweep outside the lookback
-// means this flip is not considered, so the working mark and its limit stay.
-// Below Min RR, or outside the window, the old mark is removed and nothing is
-// drawn. A wick through the candle does not. Skip Sundays leaves the mark in place.
+// A close back through an old mark is not a setup. Nothing is drawn on that
+// candle, and no order is sent. A new setup is a swing break or a continuation
+// that passed Liquidity Lookback. The order and the box wait for the next
+// candle to leave that level inside the body gap, with the wick beyond it.
 bool flippedThisBar = false
-if barstate.isconfirmed and not sundaySkipped and array.size(formations) > 0
-    Formation zone = array.get(formations, array.size(formations) - 1)
-    bool brokeOpposingSwing = (zone.direction == DIR_BEAR and bullishBreakNow) or (zone.direction == DIR_BULL and bearishBreakNow)
-    bool closedBullZone = zone.direction == DIR_BULL and not zone.flipped and bar_index > zone.creationBar + 1 and
-         close < open and close < zone.impulseLow and not brokeOpposingSwing
-    bool closedBearZone = zone.direction == DIR_BEAR and not zone.flipped and bar_index > zone.creationBar + 1 and
-         close > open and close > zone.impulseHigh and not brokeOpposingSwing
-    bool flipCommitted = (closedBullZone and f_committed(false)) or (closedBearZone and f_committed(true))
-    if flipCommitted
-        int flipDirection = closedBullZone ? DIR_BEAR : DIR_BULL
-        bool flipLiquidity = f_liquidityOk(flipDirection == DIR_BULL)
-        if flipLiquidity
-            int flipKind = structureDirection == flipDirection ? KIND_BOS : KIND_MSS
-            float flipLevel = na
-            int flipSwingBar = na
-            if flipDirection == DIR_BULL and not na(swingHigh) and close > swingHigh
-                flipLevel := swingHigh
-                flipSwingBar := swingHighBar
-                if swingHighOpen
-                    brokenHighBar := swingHighBar
-            else if flipDirection == DIR_BEAR and not na(swingLow) and close < swingLow
-                flipLevel := swingLow
-                flipSwingBar := swingLowBar
-                if swingLowOpen
-                    brokenLowBar := swingLowBar
-            float flipStop = marketEntry ? open : (flipDirection == DIR_BULL ? low[1] : high[1])
-            [swingTarget, swingAnchor, swingUnder, swingTooClose] = f_target(flipLevel, flipStop, flipDirection == DIR_BULL)
-            [resolvedLevel, useTarget, useAnchor, useUnder, flipTooClose] = f_resolveEntry(flipLevel, flipStop, swingTarget, swingAnchor, swingUnder, swingTooClose, flipDirection == DIR_BULL, close)
-            float useLevel = marketEntry ? close : resolvedLevel
-            bool limitTooClose = flipTooClose
-            float bothOpen = open
-            float bothClose = close
-            bool bothMarketTooClose = true
-            float bothMarketTarget = na
-            int bothMarketAnchor = na
-            bool bothMarketUnder = false
-            if bothEntry
-                [bothMarketTarget, bothMarketAnchor, bothMarketUnder, bothMarketTooClose] = f_target(bothClose, bothOpen, flipDirection == DIR_BULL)
-                flipTooClose := bothMarketTooClose and limitTooClose
-            bool marketLeg = bothEntry and not bothMarketTooClose
-            bool limitLeg = bothEntry and not limitTooClose
-            bool flipWindow = f_inWindow()
-            zone.flipped := true
-            structureDirection := flipDirection
-            Formation flipFormation = Formation.new(flipDirection, flipKind, bar_index, flipSwingBar, useLevel,
-                 zone.creationBar, zone.impulseHigh, zone.impulseLow, zone.creationBar, bar_index, high, low,
-                 false, false, false, high, low, flipStop, useTarget, time, useAnchor, useUnder, false,
-                 na, na, na, na, na, na, na)
-            flipFormation.sweepBar := flipDirection == DIR_BULL ? firstBullSweepBar : firstBearSweepBar
-            flipFormation.sweepPrice := flipDirection == DIR_BULL ? firstBullSweepPrice : firstBearSweepPrice
-            flipFormation.opposingSwing := flipDirection == DIR_BULL ? swingLow : swingHigh
-            if marketLeg
-                flipFormation.level := bothClose
-                flipFormation.stopPrice := bothOpen
-                flipFormation.targetPrice := bothMarketTarget
-                flipFormation.targetAnchorTime := bothMarketAnchor
-                flipFormation.underMinRr := bothMarketUnder
-                flipFormation.closeLines := true
-                if limitLeg
-                    flipFormation.swingLevel := useLevel
-                    flipFormation.swingStop := flipStop
-                    flipFormation.swingTarget := useTarget
-            if flipTooClose or not flipWindow
-                f_deleteVisuals(zone)
-                if strategy.position_size == 0 and zone.creationBar == array.get(pendingCreation, 0)
-                    f_clearPending()
-                f_store(flipFormation)
-            else if f_store(flipFormation)
-                if bothEntry and strategy.position_size == 0
-                    if marketLeg and f_entryOk(flipDirection, bothClose, bothOpen)
-                        f_clearPending()
-                        if flipDirection == DIR_BULL
-                            strategy.entry("1C Long", strategy.long, qty = contracts)
-                            flipFormation.protectWaiting := true
-                        else
-                            strategy.entry("1C Short", strategy.short, qty = contracts)
-                            flipFormation.protectWaiting := true
-                        array.set(pendingCreation, 0, flipFormation.creationBar)
-                        if limitLeg
-                            flipFormation.swingLimitWaiting := true
-                        f_show(flipFormation, false)
-                    else
-                        f_show(flipFormation, true)
-                else
-                    f_show(flipFormation, true)
-                f_labelFirstSweep(flipFormation)
-                formedThisBar := true
-            flippedThisBar := true
+
 
 // An opposite swing break after a mark uses the same arm as any other break.
 // Liquidity Lookback has to pass on this candle. The order and the box wait
