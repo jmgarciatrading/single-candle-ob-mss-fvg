@@ -108,6 +108,14 @@ string entryModel = input.string(ENTRY_MARKET, "Entry Model",
      tooltip = "Limit at the swing rests a limit on the candle after the mark. Its stop is the previous candle's low for a bullish signal and that candle's high for a bearish signal. The mark's candle does not fill that limit. Market at close sends a market order on the displacement candle, and the black line is that candle's close. For a swing break that is the candle that closed through the swing. The next candle confirms the gap and does not set the price. When the gap does not confirm, that fill is closed. For a flip the displacement candle is the flip candle. The stop is the open of that same candle and is attached on the next candle. The target and Min RR are measured from that close to that open. A close that does not clear Min RR is left unmarked. The market order fills on that candle's close. Both sends that market order and rests that swing limit. Each leg uses Contracts and keeps its own Min RR. A leg that misses Min RR is left off. The market fill can confirm outside the window. The limit is added only when the confirming candle is inside the window.")
 bool marketEntry = entryModel == ENTRY_MARKET
 bool bothEntry = entryModel == ENTRY_BOTH
+const string PATTERN_SWING = "OB + MSS + FVG"
+const string PATTERN_IFVG = "OB + iFVG"
+const string PATTERN_BOTH = "Both"
+string patternChoice = input.string(PATTERN_SWING, "Pattern",
+     options = [PATTERN_SWING, PATTERN_IFVG, PATTERN_BOTH], group = GRP_ENTRY,
+     tooltip = "OB + MSS + FVG is the swing break. The next candle has to leave that swing inside a body gap. OB + iFVG is one candle that is the order block and inverts a fair value gap. A bullish candle closes above a bearish gap and its body covers that gap. A bearish candle closes below a bullish gap and its body covers that gap. The gap comes from an earlier candle, no more than 30 candles back. An earlier close through it does not leave it for this candle. Both allows either setup. A candle that qualifies as both draws once, as the iFVG. The same liquidity sweep, window, Entry From, Min Range, Long Extension, Max Stop, Close Location, and Min RR apply. Market at close sends the order on this candle's close and the stop is its open, attached on the next candle. The fill is not closed for a missing second gap. Limit at the swing rests on the near edge of the inverted gap. The stop is that same open. Both keeps each leg and its own Min RR.")
+bool patternSwing = patternChoice == PATTERN_SWING or patternChoice == PATTERN_BOTH
+bool patternIfvg = patternChoice == PATTERN_IFVG or patternChoice == PATTERN_BOTH
 int entryFromHour = input.int(10, "Entry From", minval = 0, maxval = 23, group = GRP_ENTRY, inline = "entryfrom",
      tooltip = "No new order before this clock in Time Zone. The swing, the zone, a flip, and a continuation are still stored. 0:00 turns this check off. The default is 10:05. The structure window still starts at its own Start Time.")
 int entryFromMinute = input.int(5, "Minute", minval = 0, maxval = 59, group = GRP_ENTRY, inline = "entryfrom",
@@ -949,6 +957,40 @@ f_committed(bool bullish) =>
     float span = high - low
     float location = bullish ? close - low : high - close
     closeLocation == 0 or (span > 0 and location >= span * closeLocation)
+// A bearish gap completed barsBack bars ago: that candle's high is below the low two candles earlier.
+// The zone runs from that high up to that earlier low. A bullish gap is the mirror.
+f_bearGapTop(int barsBack) =>
+    high[barsBack] < low[barsBack + 2] ? low[barsBack + 2] : na
+f_bearGapBottom(int barsBack) =>
+    high[barsBack] < low[barsBack + 2] ? high[barsBack] : na
+f_bullGapTop(int barsBack) =>
+    low[barsBack] > high[barsBack + 2] ? low[barsBack] : na
+f_bullGapBottom(int barsBack) =>
+    low[barsBack] > high[barsBack + 2] ? high[barsBack + 2] : na
+f_gapAlreadyThrough(int barsBack, float boundary, bool above) =>
+    bool through = false
+    if barsBack > 1 and not na(boundary)
+        for gapStep = 1 to barsBack - 1
+            bool crossed = above ? close[gapStep] > boundary : close[gapStep] < boundary
+            if crossed
+                through := true
+    through
+// The newest bearish gap this bullish candle covers and closes above, or the newest bullish gap a bearish candle covers and closes below.
+f_ifvgBarsBack(bool bullish) =>
+    int found = -1
+    float bodyHigh = math.max(open, close)
+    float bodyLow = math.min(open, close)
+    bool colorOk = bullish ? close > open : close < open
+    if colorOk
+        for barsBack = 1 to 30
+            float gapTop = bullish ? f_bearGapTop(barsBack) : f_bullGapTop(barsBack)
+            float gapBottom = bullish ? f_bearGapBottom(barsBack) : f_bullGapBottom(barsBack)
+            bool covered = not na(gapTop) and not na(gapBottom) and bodyLow <= gapBottom and bodyHigh >= gapTop
+            bool beyond = bullish ? close > gapTop : close < gapBottom
+            bool fresh = not f_gapAlreadyThrough(barsBack, bullish ? gapTop : gapBottom, bullish)
+            if found == -1 and covered and beyond and fresh
+                found := barsBack
+    found
 bool bullishBreakNow = barstate.isconfirmed and swingHighOpen and close > swingHigh and close[1] <= swingHigh and close > open and f_committed(true)
 bool bearishBreakNow = barstate.isconfirmed and swingLowOpen and close < swingLow and close[1] >= swingLow and close < open and f_committed(false)
 
@@ -1069,11 +1111,40 @@ if barstate.isconfirmed and armedDirection != 0
 // candle to leave that level inside the body gap, with the wick beyond it.
 bool flippedThisBar = false
 
+// OB + iFVG is known on this close. A candle that qualifies is not also armed as a swing break.
+int ifvgBullBack = -1
+int ifvgBearBack = -1
+if patternIfvg and barstate.isconfirmed and not sundaySkipped and f_inWindow() and f_committed(true) and f_liquidityOk(true)
+    ifvgBullBack := f_ifvgBarsBack(true)
+if patternIfvg and barstate.isconfirmed and not sundaySkipped and f_inWindow() and f_committed(false) and f_liquidityOk(false)
+    ifvgBearBack := f_ifvgBarsBack(false)
+bool ifvgBull = ifvgBullBack > 0
+bool ifvgBear = ifvgBearBack > 0
+int ifvgBack = ifvgBull ? ifvgBullBack : ifvgBearBack
+bool ifvgOn = ifvgBull or ifvgBear
+float ifvgGapTop = na
+float ifvgGapBottom = na
+if ifvgBull
+    ifvgGapTop := f_bearGapTop(ifvgBack)
+    ifvgGapBottom := f_bearGapBottom(ifvgBack)
+if ifvgBear
+    ifvgGapTop := f_bullGapTop(ifvgBack)
+    ifvgGapBottom := f_bullGapBottom(ifvgBack)
+float ifvgClose = close
+float ifvgOpen = open
+float ifvgLimit = ifvgBull ? ifvgGapTop : ifvgGapBottom
+int ifvgDirection = ifvgBull ? DIR_BULL : DIR_BEAR
+bool ifvgStopSide = ifvgBull ? ifvgOpen < ifvgClose and ifvgOpen < ifvgLimit : ifvgOpen > ifvgClose and ifvgOpen > ifvgLimit
+[ifvgMarketTarget, ifvgMarketAnchor, ifvgMarketUnder, ifvgMarketTooClose] = f_target(ifvgClose, ifvgOpen, ifvgBull)
+[ifvgLimitTarget, ifvgLimitAnchor, ifvgLimitUnder, ifvgLimitTooClose] = f_target(ifvgLimit, ifvgOpen, ifvgBull)
+bool ifvgMarketLeg = ifvgOn and ifvgStopSide and (marketEntry or bothEntry) and not ifvgMarketTooClose and f_entryOk(ifvgDirection, ifvgClose, ifvgOpen)
+bool ifvgLimitLeg = ifvgOn and ifvgStopSide and (not marketEntry or bothEntry) and not ifvgLimitTooClose and f_entryOk(ifvgDirection, ifvgLimit, ifvgOpen)
+bool ifvgTake = ifvgMarketLeg or ifvgLimitLeg
 
 // An opposite swing break after a mark uses the same arm as any other break.
 // Liquidity Lookback has to pass on this candle. The order and the box wait
 // for the next candle to leave the swing inside the body gap.
-if not sundaySkipped and not flippedThisBar and bullishBreakNow and f_inWindow()
+if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar and bullishBreakNow and f_inWindow()
     int kind = structureDirection == DIR_BULL ? KIND_BOS : KIND_MSS
     structureDirection := DIR_BULL
     brokenHighBar := swingHighBar
@@ -1129,7 +1200,7 @@ else if not sundaySkipped and not flippedThisBar and barstate.isconfirmed and sw
     structureDirection := DIR_BULL
     brokenHighBar := swingHighBar
 
-if not sundaySkipped and not flippedThisBar and bearishBreakNow and f_inWindow()
+if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar and bearishBreakNow and f_inWindow()
     int kind = structureDirection == DIR_BEAR ? KIND_BOS : KIND_MSS
     structureDirection := DIR_BEAR
     brokenLowBar := swingLowBar
@@ -1188,7 +1259,7 @@ else if not sundaySkipped and not flippedThisBar and barstate.isconfirmed and sw
 // A flat account takes the close now and the next candle closes it when the
 // gap fails. Session VWAP matches the chart VWAP. The chase check is only for a continuation.
 float sessionVwap = ta.vwap(hlc3)
-if continuationDir != 0 and barstate.isconfirmed and not sundaySkipped and not flippedThisBar and not formedThisBar and armedDirection == 0 and f_inWindow()
+if patternSwing and not ifvgTake and continuationDir != 0 and barstate.isconfirmed and not sundaySkipped and not flippedThisBar and not formedThisBar and armedDirection == 0 and f_inWindow()
     bool continuationBull = continuationDir == DIR_BULL
     float continuationClose = close
     float continuationOpen = open
@@ -1236,6 +1307,34 @@ if continuationDir != 0 and barstate.isconfirmed and not sundaySkipped and not f
             marketOrderLive := true
             array.set(pendingCreation, 0, bar_index)
 continuationDir := 0
+
+// The iFVG candle is the order block. The order is this close, and the stop is this open.
+// The next candle attaches the stop. A missing second gap does not close the fill.
+// Limit entry is the near edge of the inverted gap, with the same open as the stop.
+if ifvgTake and not flippedThisBar
+    int ifvgKind = structureDirection == ifvgDirection ? KIND_BOS : KIND_MSS
+    structureDirection := ifvgDirection
+    float ifvgLevel = ifvgMarketLeg ? ifvgClose : ifvgLimit
+    float ifvgTarget = ifvgMarketLeg ? ifvgMarketTarget : ifvgLimitTarget
+    int ifvgAnchor = ifvgMarketLeg ? ifvgMarketAnchor : ifvgLimitAnchor
+    bool ifvgUnder = ifvgMarketLeg ? ifvgMarketUnder : ifvgLimitUnder
+    Formation formation = Formation.new(ifvgDirection, ifvgKind, bar_index, bar_index, ifvgLevel,
+         bar_index, high, low, bar_index - ifvgBack, bar_index, ifvgGapTop, ifvgGapBottom,
+         false, false, false, high, low, ifvgOpen, ifvgTarget, time, ifvgAnchor, ifvgUnder, false,
+         na, na, na, na, na, na, na)
+    formation.atClose := ifvgMarketLeg
+    formation.closeLines := ifvgMarketLeg
+    if ifvgMarketLeg and ifvgLimitLeg
+        formation.swingLevel := ifvgLimit
+        formation.swingStop := ifvgOpen
+        formation.swingTarget := ifvgLimitTarget
+        formation.swingLimitWaiting := true
+    formation.sweepBar := ifvgBull ? firstBullSweepBar : firstBearSweepBar
+    formation.sweepPrice := ifvgBull ? firstBullSweepPrice : firstBearSweepPrice
+    formation.opposingSwing := ifvgBull ? swingLow : swingHigh
+    if f_store(formation)
+        f_labelFirstSweep(formation)
+        f_show(formation, true)
 
 // The candle that leaves the gap is not a fill. A later bar that trades into
 // the gap or the order block marks that zone touched.
