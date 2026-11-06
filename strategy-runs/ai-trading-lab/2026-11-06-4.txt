@@ -1,0 +1,57 @@
+Single Candle OB + MSS + FVG, stage 4
+Date: 2026-11-06
+Sample: 12 months unseen
+File: AI/ai-futures-trading-lab/data/mes-fut-20241101-20251031.ohlcv-1m.csv.zst
+Volume: the matching volume.json
+Window: 2024-11-01 00:00 UTC through 2025-10-31 20:59 UTC
+New York stamps on the built bars: 2024-10-31 20:00 through 2025-10-31 16:55
+70623 five-minute bars. One MES, no commission, $5 per point.
+
+This is the book already chosen on the fitted sample. No rule was added, dropped, or retuned.
+Policy t1005-r8-long22, lab commit 078490d:
+market at the displacement close, swing 1, breach lookback 2
+target 4H, target swing 6, Min RR 2, Max Target 14
+liquidity 4H, key level off, lookback 1, close location 0
+structure window 09:30-16:00 New York, entry from 10:05
+six-bar span at least 8 points, no long more than 22 points above the 09:30 open
+max stop 30, hold a winner, flat a same-session trade at 15:55
+a later signal cannot fill worse than the original stop
+
+Front month by daily volume, back-adjusted to the last contract:
+MESZ4 20241101-20241213 offset 231.25
+MESH5 20241215-20250316 offset 160.75
+MESM5 20250317-20250613 offset 108.50
+MESU5 20250615-20250912 offset 56.75
+MESZ5 20250914-20251031 offset 0.00
+Roll MESZ4 to MESH5 on 20241215, spread 70.50, 60 minutes.
+Roll MESH5 to MESM5 on 20250317, spread 52.25, 1380 minutes.
+Roll MESM5 to MESU5 on 20250615, spread 51.75, 120 minutes.
+Roll MESU5 to MESZ5 on 20250914, spread 56.75, 120 minutes.
+20241214 has no leader. It is the Saturday between those contracts.
+
+                 12 months unseen
+Trades           603
+Net              $2,731.25
+Profit factor    1.207
+Drawdown         $1,581.25
+Worst loss       -$148.75
+Without the best trade  $1,121.25
+First half / second half  $2,112.50 / $618.75
+Trades of 80 points or more  3
+
+148 wins, 453 losses, 2 scratches. Widest stop 29.75 points. 19 exits were capped at the original stop. No loss wider than its planned stop.
+The split is 2025-05-01 New York.
+Largest win +$1,610.00 (+322.00 points).
+Drawdown: peak 2025-04-10 12:25 equity +$3,090.00, trough 2025-06-05 12:15 equity +$1,508.75.
+Minimum equity -$675.00 at 2024-12-19 15:25.
+The three trades of 80 points or more:
+2024-12-26 15:55 short, entry 6255.75, stop 6261.50, exit 2024-12-27 10:10 at 6175.25, +80.50 points, +$402.50
+2025-04-08 10:40 short, entry 5377.75, stop 5400.75, exit 5055.75, +322.00 points, +$1,610.00
+2025-04-14 11:00 short, entry 5580.00, stop 5585.75, exit 5499.50, +80.50 points, +$402.50
+
+Months: 2024-11 -$292.50, 2024-12 +$400.00, 2025-01 +$121.25, 2025-02 -$36.25, 2025-03 +$1,211.25, 2025-04 +$708.75, 2025-05 -$477.50, 2025-06 +$501.25, 2025-07 +$36.25, 2025-08 +$122.50, 2025-09 +$358.75, 2025-10 +$77.50.
+Losing months: November 2024 -$292.50, February 2025 -$36.25, May 2025 -$477.50.
+
+The fitted sample and its five-minute cache were not modified.
+This result was not used to change the book.
+It matches the 2026-11-05 stage 4 replay.
