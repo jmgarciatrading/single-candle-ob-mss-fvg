@@ -1,0 +1,45 @@
+Single Candle OB + MSS + FVG, PyneCore run
+Date: 2026-11-06
+Stage 1. Fitted sample only. No gate was retuned.
+
+Script: Single_Candle_OB_MSS_FVG_Strategy.pine at b24e8d5
+Compiler: PyneCore, workdir /home/vesper/.local/share/pynecore/workdir
+Compiled to scripts/Single_Candle_OB_MSS_FVG_Strategy.py
+That compiled file stays out of this repository.
+
+Data: mes-front.ohlcv, the unadjusted front-month series of the fitted sample.
+Window: 2026-05-01 through 2026-10-30. Chart timeframe 5.
+pointvalue is 1, so the figures below are points, not MES dollars.
+This series is not the back-adjusted lab book.
+
+Close Location 0, Timeframe Target 4H, Min RR 2, Max Target 14, Target Swing Length 6
+Liquidity Timeframe 4H, Key Level Off, Liquidity Lookback 1, VWAP Chase off
+Structure window 09:30-16:00 America/New_York, minutes 0-60, Skip Sundays off
+Entry Model Market at close
+Entry From 10:05, Min Range 8, Long Extension 22, Max Stop 30
+Hold Winner on, Flat At 15:55 on, Contracts 1, commission 0
+
+The entry waits for the third-candle body gap and the wick beyond the broken level.
+A close back through an old mark sends no order. The indicator flip label is not in this strategy.
+
+                 Fitted sample, unadjusted, points
+Trades           26
+Net              -126.25
+Profit factor    0.381
+Drawdown         170.75
+Worst loss       -19.75
+Without the best trade  -154.75
+First half / second half  -16.75 / -109.50
+Trades of 80 points or more  0
+
+6 wins, 20 losses, 0 scratches. No trade is still open.
+The first half is entries before 2026-08-01 New York.
+The largest trade is the 2026-06-08 15:30 UTC short, +28.50 points.
+The three required trades are absent. No other trade reached 80 points.
+
+Months, in points: May +10.00, Jun +1.00, Jul -27.75, Aug -50.75, Sep -51.00, Oct -7.75.
+Losing months: July -27.75, August -50.75, September -51.00, October -7.75.
+
+The previous Pyne run on this same file, before the third-candle wait and before
+the removal of the close-through order, was 341 closed trades, net -38.50 points,
+profit factor 0.976, max equity drawdown 407, largest win 104.50, largest loss -25.25.

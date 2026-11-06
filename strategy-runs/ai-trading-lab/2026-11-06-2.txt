@@ -1,0 +1,53 @@
+Single Candle OB + MSS + FVG, lab replay
+Date: 2026-11-06
+Stage 2. Fitted sample only. No gate was retuned.
+
+Lab file: AI/ai-futures-trading-lab/data/mes-fut-20260501-20261030.ohlcv-1m.csv.zst
+Window: 2026-05-01 through 2026-10-30. 35940 five-minute bars.
+Series: back-adjusted MES front month. One contract. Commission 0. One point is 5 dollars.
+Script: experiments/single_candle_hole_search.py at lab commit 078490d
+Policy: t1005-r8-long22
+The bar cache and holes-wave6.txt were not rewritten.
+
+Chart: five minutes. Market at the close.
+Close Location off. Target 4H, target swing 6, Min RR 2, Max Target 14.
+Liquidity 4H, key level off, lookback 1.
+Structure window 09:30-16:00 New York. Skip Sundays off.
+No new entry before 10:05 New York.
+The last six five-minute bars must span at least 8 points.
+No long whose fill is more than 22 points above that day's 09:30 open.
+No order whose stop is wider than 30 points.
+A trade in profit at the previous close is not closed or reversed by the next signal.
+A same-session trade still open at 15:55 is flattened at that bar's close.
+A later signal cannot fill worse than the original stop in this replay.
+
+This committed replay does not include the confirming wick. The lab flip and post
+paths in that commit still run. The indicator flip label is not in this book.
+
+                 Fitted sample
+Trades           287
+Net              $4,227.50
+Profit factor    1.827
+Drawdown         $556.25
+Worst loss       -$86.25
+Without the best trade  $3,702.50
+First half / second half  $3,317.50 / $910.00
+Trades of 80 points or more  4
+
+81 wins, 205 losses, 1 scratch. Widest stop 29 points. 7 exits were capped at the original stop.
+The first half is entries before 2026-08-01 New York.
+The four trades of 80 points or more:
+2026-06-05 11:20 short, entry 7633.50, stop 7641.00, exit 7528.50, +105 points, +$525.00
+2026-06-09 10:10 short, entry 7567.25, stop 7591.75, exit 7485.75, +81.50 points, +$407.50
+2026-06-09 12:55 long, entry 7417.50, stop 7388.50, exit 15:55 at 7522.00, +104.50 points, +$522.50
+2026-06-17 10:30 short, entry 7657.25, stop 7666.50, exit 15:55 at 7559.25, +98 points, +$490.00
+
+Drawdown: peak 2026-07-27 05:45 equity +$3,640, trough 2026-07-29 15:25 equity +$3,084.
+Months: May +$534, Jun +$2,510, Jul +$274, Aug +$288, Sep -$42, Oct +$665.
+Losing month: September -$42.
+
+The working copy of experiments/single_candle_chart_search.py was not edited.
+That copy adds the confirming wick and makes flip and post return immediately.
+A replay of that copy on the same cached bars closed 92 trades, net $822.50,
+profit factor 1.649, drawdown $327.50, worst loss -$85.00, and none of the four
+80-point trades. That copy is not this table.
