@@ -4,9 +4,10 @@ indicator("Single Candle OB + MSS + FVG", shorttitle = "1C Impulse", overlay = t
 
 // The highlighted candle is the one that closes through the swing. The next
 // candle confirms it when that swing is left strictly inside the body fair value
-// gap between the previous candle and the confirming candle. Wicks may overlap
-// that gap. The confirming candle's color does not matter. The box then covers
-// only the break candle, with a dotted line at its midpoint. A wick that only
+// gap between the previous candle and the confirming candle. The confirming
+// candle's wick has to stay beyond the swing. A wick back through the swing
+// is not a confirmation. The confirming candle's color does not matter.
+// The box then covers only the break candle, with a dotted line at its midpoint. A wick that only
 // tags the swing does not qualify. The swing is booked on that close even when
 // the next candle does not leave it inside the gap. Limit at the swing draws
 // the entry on the breached swing and extends the stop, the entry, and the
@@ -788,7 +789,8 @@ bool bearishBreakNow = barstate.isconfirmed and swingLowOpen and close < swingLo
 // The next candle confirms when the broken swing sits strictly inside the body
 // gap. A bullish gap needs the previous body high below the swing and this
 // body low above it. A bearish gap is the mirror. Color does not matter.
-// Wicks may overlap. Skip Sundays leaves the swing unused and leaves the
+// This candle's wick has to stay beyond the swing. A wick back through it
+// leaves the setup undrawn. Skip Sundays leaves the swing unused and leaves the
 // current mark in place.
 bool sundaySkipped = skipSundays and dayofweek(time, timeZone) == dayofweek.sunday
 bool formedThisBar = false
@@ -797,8 +799,8 @@ if barstate.isconfirmed and armedDirection != 0
         float candle3BodyHigh = math.max(open, close)
         float candle3BodyLow = math.min(open, close)
         bool confirmedFvg = armedDirection == DIR_BULL ?
-             armedLevel > armedCandle1BodyHigh and armedLevel < candle3BodyLow :
-             armedLevel < armedCandle1BodyLow and armedLevel > candle3BodyHigh
+             armedLevel > armedCandle1BodyHigh and armedLevel < candle3BodyLow and low > armedLevel :
+             armedLevel < armedCandle1BodyLow and armedLevel > candle3BodyHigh and high < armedLevel
         bool liquidityStill = not liquidityOn or (armedDirection == DIR_BULL ? bullSweepValid : bearSweepValid)
         bool keyStill = not keyLevelOn or (armedDirection == DIR_BULL ? keyBullValid : keyBearValid)
         bool sweepStillValid = liquidityStill and keyStill and (liquidityOn or not keyLevelOn)
@@ -935,42 +937,9 @@ if barstate.isconfirmed and not sundaySkipped and array.size(formations) > 0
                 formedThisBar := true
             flippedThisBar := true
 
-// After a confirmation, the next swing break the other way is a continuation.
-// The entry is this candle's close. The stop is its open.
-// This bar is not also armed as a new fair value gap.
-if barstate.isconfirmed and not sundaySkipped and not flippedThisBar and not formedThisBar and f_inWindow() and array.size(formations) > 0
-    Formation postZone = array.get(formations, array.size(formations) - 1)
-    bool postBull = postZone.direction == DIR_BEAR and not postZone.flipped and bar_index > postZone.creationBar + 1 and bullishBreakNow
-    bool postBear = postZone.direction == DIR_BULL and not postZone.flipped and bar_index > postZone.creationBar + 1 and bearishBreakNow
-    if postBull or postBear
-        int postDir = postBull ? DIR_BULL : DIR_BEAR
-        float postClose = close
-        float postOpen = open
-        bool postStopSide = postBull ? postOpen < postClose : postOpen > postClose
-        [postTarget, postAnchor, postUnder, postTooClose] = f_target(postClose, postOpen, postBull)
-        int postKind = structureDirection == postDir ? KIND_BOS : KIND_MSS
-        postZone.flipped := true
-        structureDirection := postDir
-        flippedThisBar := true
-        if postBull
-            brokenHighBar := swingHighBar
-        else
-            brokenLowBar := swingLowBar
-        if postStopSide and not postTooClose
-            Formation postFormation = Formation.new(postDir, postKind, bar_index, bar_index, postClose,
-                 bar_index, high, low, bar_index, bar_index, high, low,
-                 false, false, false, high, low, postOpen, postTarget, time, postAnchor, postUnder, false,
-                 na, na, na, na, na, na, na)
-            postFormation.atClose := true
-            postFormation.opposingSwing := postBull ? swingLow : swingHigh
-            postFormation.sweepBar := postBull ? firstBullSweepBar : firstBearSweepBar
-            postFormation.sweepPrice := postBull ? firstBullSweepPrice : firstBearSweepPrice
-            if f_store(postFormation)
-                if f_entryOk(postDir, postClose, postOpen)
-                    f_show(postFormation)
-                    f_labelFirstSweep(postFormation)
-                formedThisBar := true
-
+// An opposite swing break after a mark uses the same arm as any other break.
+// Liquidity Lookback has to pass on this candle. The box waits for the next
+// candle to leave the swing inside the body gap. Nothing is drawn here.
 if not sundaySkipped and not flippedThisBar and bullishBreakNow and f_inWindow()
     int kind = structureDirection == DIR_BULL ? KIND_BOS : KIND_MSS
     structureDirection := DIR_BULL
@@ -1079,11 +1048,12 @@ else if not sundaySkipped and not flippedThisBar and barstate.isconfirmed and sw
     structureDirection := DIR_BEAR
     brokenLowBar := swingLowBar
 
-// A continuation is the close through the sweep of the breaching candle.
-// The entry is that candle's close. The stop is that candle's open.
+// A continuation arms on this candle when Liquidity Lookback passes. The entry
+// is this close and the stop is this open. The box waits for the next candle
+// to leave that close inside the body gap, with its wick beyond that close.
 // Session VWAP matches the chart VWAP. The chase check is only for a continuation.
 float sessionVwap = ta.vwap(hlc3)
-if continuationDir != 0 and barstate.isconfirmed and not sundaySkipped and not flippedThisBar and not formedThisBar and f_inWindow()
+if continuationDir != 0 and barstate.isconfirmed and not sundaySkipped and not flippedThisBar and not formedThisBar and armedDirection == 0 and f_inWindow()
     bool continuationBull = continuationDir == DIR_BULL
     float continuationClose = close
     float continuationOpen = open
@@ -1092,22 +1062,35 @@ if continuationDir != 0 and barstate.isconfirmed and not sundaySkipped and not f
     float vwapDistance = continuationBull ? continuationClose - sessionVwap : sessionVwap - continuationClose
     bool vwapChased = useVwapChase and not na(sessionVwap) and continuationRisk > 0 and vwapDistance > vwapChase * continuationRisk
     [continuationTarget, continuationAnchor, continuationUnder, continuationTooClose] = f_target(continuationClose, continuationOpen, continuationBull)
-    if continuationStopSide and not continuationTooClose and not vwapChased and f_keyOk(continuationBull) and f_committed(continuationBull)
+    bool continuationLiquidity = f_liquidityOk(continuationBull)
+    if continuationStopSide and not continuationTooClose and not vwapChased and f_keyOk(continuationBull) and f_committed(continuationBull) and continuationLiquidity
         int continuationKind = structureDirection == continuationDir ? KIND_BOS : KIND_MSS
         structureDirection := continuationDir
-        Formation continuationFormation = Formation.new(continuationDir, continuationKind, bar_index, bar_index, continuationClose,
-             bar_index, high, low, bar_index, bar_index, high, low,
-             false, false, false, high, low, continuationOpen, continuationTarget, time, continuationAnchor, continuationUnder, false,
-             na, na, na, na, na, na, na)
-        continuationFormation.atClose := true
-        continuationFormation.opposingSwing := continuationBull ? swingLow : swingHigh
-        continuationFormation.sweepBar := continuationBull ? bullContSweepBar : bearContSweepBar
-        continuationFormation.sweepPrice := continuationBull ? bullContSweepPrice : bearContSweepPrice
-        if f_store(continuationFormation)
-            if f_entryOk(continuationDir, continuationClose, continuationOpen)
-                f_show(continuationFormation)
-                f_labelFirstSweep(continuationFormation)
-            formedThisBar := true
+        armedDirection := continuationDir
+        armedKind := continuationKind
+        armedBar := bar_index
+        armedSwingBar := bar_index
+        armedLevel := continuationClose
+        armedObBar := bar_index
+        armedObTop := high
+        armedObBottom := low
+        armedCandle1BodyHigh := math.max(open[1], close[1])
+        armedCandle1BodyLow := math.min(open[1], close[1])
+        armedHigh := high
+        armedLow := low
+        armedStop := continuationOpen
+        armedSwingStop := continuationOpen
+        armedSwingTarget := continuationTarget
+        armedSwingTargetTime := continuationAnchor
+        armedSwingTooClose := continuationTooClose
+        armedTarget := continuationTarget
+        armedTime := time
+        armedTargetTime := continuationAnchor
+        armedUnder := continuationUnder
+        armedMarketLive := true
+        armedEntryOk := f_entryOk(continuationDir, continuationClose, continuationOpen)
+        armedSweepBar := continuationBull ? firstBullSweepBar : firstBearSweepBar
+        armedSweepPrice := continuationBull ? firstBullSweepPrice : firstBearSweepPrice
 continuationDir := 0
 
 // The candle that leaves the gap is not a fill. A later bar that trades into

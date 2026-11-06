@@ -148,7 +148,7 @@ def replay(bars: list[Bar], swing_length: int = 1, minutes: list[int] | None = N
             level = pending["level"]
             candle3_body_high = body_high(bar)
             candle3_body_low = body_low(bar)
-            if pending["direction"] == 1 and level > pending["c1_body_high"] and level < candle3_body_low:
+            if pending["direction"] == 1 and level > pending["c1_body_high"] and level < candle3_body_low and bar.low > level:
                 events.append(Event(
                     1, pending["kind"], pending["bar"], pending["bar"],
                     pending["bar"] - 1, index, level,
@@ -160,7 +160,7 @@ def replay(bars: list[Bar], swing_length: int = 1, minutes: list[int] | None = N
                     "low": pending["low"],
                     "index": pending["bar"],
                 }
-            elif pending["direction"] == -1 and level < pending["c1_body_low"] and level > candle3_body_high:
+            elif pending["direction"] == -1 and level < pending["c1_body_low"] and level > candle3_body_high and bar.high < level:
                 events.append(Event(
                     -1, pending["kind"], pending["bar"], pending["bar"],
                     pending["bar"] - 1, index, level,
@@ -276,13 +276,13 @@ def bearish_break() -> list[Bar]:
 
 
 def bullish_confirm() -> Bar:
-    # Body low is 13.4, above the swing at 13. The wick trades back through it.
-    return Bar(13.4, 15.0, 12.8, 14.6)
+    # Body low is 13.4 and the wick low is 13.1, both above the swing at 13.
+    return Bar(13.4, 15.0, 13.1, 14.6)
 
 
 def bearish_confirm() -> Bar:
-    # Body high is 8.6, below the swing at 9. The wick trades back through it.
-    return Bar(8.6, 9.2, 7.5, 7.8)
+    # Body high is 8.6 and the wick high is 8.9, both below the swing at 9.
+    return Bar(8.6, 8.9, 7.5, 7.8)
 
 
 class SingleCandleTests(unittest.TestCase):
@@ -293,6 +293,12 @@ class SingleCandleTests(unittest.TestCase):
     def test_bearish_close_leaves_the_swing_inside_the_body_gap(self):
         event = replay(bearish_break() + [bearish_confirm()])[0]
         self.assertEqual(event, Event(-1, "MSS", 4, 4, 3, 5, 9.0, 10.4, 8.6))
+
+    def test_confirming_wick_through_the_swing_is_rejected(self):
+        wick = bullish_break() + [Bar(13.4, 15.0, 12.8, 14.6)]
+        self.assertEqual(replay(wick), [])
+        bear_wick = bearish_break() + [Bar(8.6, 9.2, 7.5, 7.8)]
+        self.assertEqual(replay(bear_wick), [])
 
     def test_swing_on_the_body_edge_is_rejected(self):
         on_edge = bullish_break() + [Bar(13.0, 14.8, 12.6, 14.2)]
@@ -511,8 +517,8 @@ class PineSourceTests(unittest.TestCase):
         self.assertNotIn("bullishCandle2", self.source)
         self.assertNotIn("bearishCandle2", self.source)
         self.assertIn('input.int(1, "Swing Length"', self.source)
-        self.assertIn("armedLevel > armedCandle1BodyHigh and armedLevel < candle3BodyLow", self.source)
-        self.assertIn("armedLevel < armedCandle1BodyLow and armedLevel > candle3BodyHigh", self.source)
+        self.assertIn("armedLevel > armedCandle1BodyHigh and armedLevel < candle3BodyLow and low > armedLevel", self.source)
+        self.assertIn("armedLevel < armedCandle1BodyLow and armedLevel > candle3BodyHigh and high < armedLevel", self.source)
         self.assertIn("armedCandle1BodyHigh := math.max(open[1], close[1])", self.source)
         self.assertIn('input.int(2, "Swing Breach Lookback"', self.source)
         self.assertIn("bullCloseAge == swingBreachLookback", self.source)
@@ -558,8 +564,8 @@ class PineSourceTests(unittest.TestCase):
         self.assertIn("f_target(continuationClose, continuationOpen, continuationBull)", self.source)
         self.assertIn('input.bool(false, "VWAP Chase"', self.source)
         self.assertIn("formation.opposingSwing := armedDirection == DIR_BULL ? swingLow : swingHigh", self.source)
-        self.assertIn("postZone.direction == DIR_BEAR and not postZone.flipped and bar_index > postZone.creationBar + 1 and bullishBreakNow", self.source)
-        self.assertIn("postZone.direction == DIR_BULL and not postZone.flipped and bar_index > postZone.creationBar + 1 and bearishBreakNow", self.source)
+        self.assertNotIn("postZone.direction", self.source)
+        self.assertNotIn("f_show(postFormation", self.source)
         self.assertIn('input.string("Off", "Key Level"', self.source)
         self.assertIn('"Off", "Same", "1M", "5M", "15M", "1H", "4H", "Daily"', self.source)
         self.assertIn("low < closedKeyLow or close < closedKeyLow", self.source)
@@ -572,7 +578,11 @@ class PineSourceTests(unittest.TestCase):
         self.assertIn("float sessionVwap = ta.vwap(hlc3)", self.source)
         self.assertIn("bool vwapChased = useVwapChase and not na(sessionVwap) and continuationRisk > 0 and vwapDistance > vwapChase * continuationRisk", self.source)
         self.assertIn("not vwapChased", self.source)
-        self.assertIn("continuationFormation.atClose := true", self.source)
+        self.assertNotIn("continuationFormation", self.source)
+        self.assertIn("armedLevel := continuationClose", self.source)
+        self.assertIn("f_liquidityOk(continuationBull)", self.source)
+        self.assertIn("armedDirection == 0", self.source)
+        self.assertIn("armedSweepBar := continuationBull ? firstBullSweepBar : firstBearSweepBar", self.source)
         self.assertIn("sweepValid and not na(sweepBar) and bar_index - sweepBar <= liquidityLookback", self.source)
         self.assertIn("confirmedFvg and sweepStillValid", self.source)
         self.assertIn("f_inWindowAt(int t)", self.source)
@@ -595,8 +605,8 @@ class PineSourceTests(unittest.TestCase):
         self.assertIn("bullSweepCandle != closedLiqTime", self.source)
         self.assertIn("f_labelFirstSweep(formation)", self.source)
         self.assertIn("f_labelFirstSweep(flipFormation)", self.source)
-        self.assertIn("f_labelFirstSweep(continuationFormation)", self.source)
-        self.assertIn("continuationFormation.sweepBar := continuationBull ? bullContSweepBar : bearContSweepBar", self.source)
+        self.assertNotIn("f_labelFirstSweep(continuationFormation)", self.source)
+        self.assertNotIn("bullContSweepBar : bearContSweepBar", self.source)
         self.assertIn("bar_index - sweepBar <= liquidityLookback", self.source)
         self.assertIn("(marketEntry or not htfTooClose) and f_liquidityOk(true)", self.source)
         self.assertIn("(marketEntry or not htfTooClose) and f_liquidityOk(false)", self.source)
@@ -704,8 +714,8 @@ class StrategySourceTests(unittest.TestCase):
         self.assertIn("float useLevel = marketEntry ? close : resolvedLevel", self.source)
         self.assertNotIn("f_target(close,", self.source)
         self.assertIn('input.int(2, "Swing Breach Lookback"', self.source)
-        self.assertIn("armedLevel > armedCandle1BodyHigh and armedLevel < candle3BodyLow", self.source)
-        self.assertIn("armedLevel < armedCandle1BodyLow and armedLevel > candle3BodyHigh", self.source)
+        self.assertIn("armedLevel > armedCandle1BodyHigh and armedLevel < candle3BodyLow and low > armedLevel", self.source)
+        self.assertIn("armedLevel < armedCandle1BodyLow and armedLevel > candle3BodyHigh and high < armedLevel", self.source)
         self.assertIn("process_orders_on_close = true", self.source)
         self.assertIn("marketOrderLive := true", self.source)
         self.assertIn("f_show(formation, false)", self.source)
@@ -737,8 +747,8 @@ class StrategySourceTests(unittest.TestCase):
         self.assertIn("f_target(continuationClose, continuationOpen, continuationBull)", self.source)
         self.assertIn('input.bool(false, "VWAP Chase"', self.source)
         self.assertIn("formation.opposingSwing := armedDirection == DIR_BULL ? swingLow : swingHigh", self.source)
-        self.assertIn("postZone.direction == DIR_BEAR and not postZone.flipped and bar_index > postZone.creationBar + 1 and bullishBreakNow", self.source)
-        self.assertIn("postZone.direction == DIR_BULL and not postZone.flipped and bar_index > postZone.creationBar + 1 and bearishBreakNow", self.source)
+        self.assertNotIn("postZone.direction", self.source)
+        self.assertNotIn("f_show(postFormation", self.source)
         self.assertIn('input.string("Off", "Key Level"', self.source)
         self.assertIn('"Off", "Same", "1M", "5M", "15M", "1H", "4H", "Daily"', self.source)
         self.assertIn("low < closedKeyLow or close < closedKeyLow", self.source)
@@ -751,7 +761,11 @@ class StrategySourceTests(unittest.TestCase):
         self.assertIn("float sessionVwap = ta.vwap(hlc3)", self.source)
         self.assertIn("bool vwapChased = useVwapChase and not na(sessionVwap) and continuationRisk > 0 and vwapDistance > vwapChase * continuationRisk", self.source)
         self.assertIn("not vwapChased", self.source)
-        self.assertIn("continuationFormation.atClose := true", self.source)
+        self.assertNotIn("continuationFormation", self.source)
+        self.assertIn("armedLevel := continuationClose", self.source)
+        self.assertIn("f_liquidityOk(continuationBull)", self.source)
+        self.assertIn("armedDirection == 0", self.source)
+        self.assertIn("armedSweepBar := continuationBull ? firstBullSweepBar : firstBearSweepBar", self.source)
         self.assertIn("sweepValid and not na(sweepBar) and bar_index - sweepBar <= liquidityLookback", self.source)
         self.assertIn("confirmedFvg and sweepStillValid", self.source)
         self.assertIn("f_inWindowAt(int t)", self.source)
@@ -774,8 +788,8 @@ class StrategySourceTests(unittest.TestCase):
         self.assertIn("bullSweepCandle != closedLiqTime", self.source)
         self.assertIn("f_labelFirstSweep(formation)", self.source)
         self.assertIn("f_labelFirstSweep(flipFormation)", self.source)
-        self.assertIn("f_labelFirstSweep(continuationFormation)", self.source)
-        self.assertIn("continuationFormation.sweepBar := continuationBull ? bullContSweepBar : bearContSweepBar", self.source)
+        self.assertNotIn("f_labelFirstSweep(continuationFormation)", self.source)
+        self.assertNotIn("bullContSweepBar : bearContSweepBar", self.source)
         self.assertIn("(marketEntry or not htfTooClose) and f_liquidityOk(true)", self.source)
         self.assertIn("(marketEntry or not htfTooClose) and f_liquidityOk(false)", self.source)
         self.assertIn("armedStop := open", self.source)
