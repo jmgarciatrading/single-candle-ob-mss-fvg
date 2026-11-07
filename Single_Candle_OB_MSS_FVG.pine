@@ -55,8 +55,8 @@ string displayMode = input.string(DISPLAY_LATEST, "Display Mode",
      options = [DISPLAY_LATEST, DISPLAY_ALL], group = GRP_DISPLAY)
 
 string GRP_TARGET = "Target"
-string targetChoice = input.string("4H", "Timeframe Target", options = ["Off", "1M", "5M", "15M", "1H", "4H", "Daily"], group = GRP_TARGET,
-     tooltip = "Take profit is the newest confirmed swing on this timeframe beyond the entry. A bullish signal uses a swing high above that entry. A bearish signal uses a swing low below it. A wick through the swing does not skip it. Limit at the swing puts the stop on the previous candle's low for a bullish signal and on its high for a bearish signal. That distance starts at the breached swing. Market at close puts the stop on the open of the displacement candle and measures the distance from that candle's close. When no target swing is beyond the entry, the target is two times that distance. Off does not use a swing. Max Target then sets the target, and 0 leaves it empty. Min RR checks the final target: the swing, that two-times fallback, or the Max Target cap. Equal to the multiple still marks. Min RR above 0 leaves the candle unmarked when the final target is closer than that multiple. A flip uses the same multiple. A timeframe below the chart leaves the swing target off. Min RR above 0 then leaves the candle unmarked.")
+string targetChoice = input.string("4H", "Timeframe Target", options = ["Off", "1M", "5M", "15M", "1H", "4H", "Daily", "HTF EQ"], group = GRP_TARGET,
+     tooltip = "Take profit is the newest confirmed swing on this timeframe beyond the entry. A bullish signal uses a swing high above that entry. A bearish signal uses a swing low below it. A wick through the swing does not skip it. Limit at the swing puts the stop on the previous candle's low for a bullish signal and on its high for a bearish signal. That distance starts at the breached swing. Market at close puts the stop on the open of the displacement candle and measures the distance from that candle's close. When no target swing is beyond the entry, the target is two times that distance. Off does not use a swing. Max Target then sets the target, and 0 leaves it empty. HTF EQ uses the midpoint of the liquidity candle this setup swept. A sweep of the 8AM candle targets the middle of that candle. A bullish setup uses the candle whose low was swept. A bearish setup uses the candle whose high was swept. A flip uses the candle of the sweep it opposes. When that midpoint is already behind the entry, or the distance from the entry is under two times the stop, the target is two times the stop and the midpoint is not used. Equal to two times still uses the midpoint. Max Target does not move that midpoint or that two-times target. Min RR checks the final target: the swing, that two-times fallback, the Max Target cap, or that midpoint. Equal to the multiple still marks. Min RR above 0 leaves the candle unmarked when the final target is closer than that multiple. A flip uses the same multiple. A timeframe below the chart leaves the swing target off. Min RR above 0 then leaves the candle unmarked.")
 int minRr = input.int(2, "Min RR", minval = 0, maxval = 50, group = GRP_TARGET,
      tooltip = "The candle is not marked when the final target is closer than this multiple of the stop distance. Limit at the swing measures that distance from the breached swing to the previous candle. Market at close measures it from the close of the displacement candle to the open of that same candle. The final target is the higher-timeframe swing, the two-times fallback when no swing is beyond the entry, or the Max Target cap when that cap is closer. A flip uses the same multiple. Equal to the multiple still marks. 0 turns this check off. The break is still booked. The default is 2.")
 int maxTarget = input.int(14, "Max Target", minval = 0, maxval = 50, group = GRP_TARGET,
@@ -119,12 +119,13 @@ float longExtension = input.float(22, "Long Extension", minval = 0, step = 0.25,
 float maxStop = input.float(30, "Max Stop", minval = 0, step = 0.25, group = GRP_ENTRY,
      tooltip = "A mark is skipped when the distance from its entry to its stop is wider than this. 0 turns the check off. The stop on a drawn mark is not widened.")
 
+bool htfEqTarget = targetChoice == "HTF EQ"
 string targetPine = targetChoice == "Daily" ? "D" : targetChoice == "4H" ? "240" : targetChoice == "1H" ? "60" : targetChoice == "15M" ? "15" : targetChoice == "5M" ? "5" : targetChoice == "1M" ? "1" : timeframe.period
-bool targetTfOk = targetChoice == "Off" or timeframe.in_seconds(targetPine) >= timeframe.in_seconds()
-bool swingTargetOn = targetChoice != "Off" and targetTfOk
-bool targetOn = swingTargetOn or maxTarget > 0
+bool targetTfOk = targetChoice == "Off" or htfEqTarget or timeframe.in_seconds(targetPine) >= timeframe.in_seconds()
+bool swingTargetOn = not htfEqTarget and targetChoice != "Off" and targetTfOk
+bool targetOn = htfEqTarget or swingTargetOn or maxTarget > 0
 string safeTargetPine = swingTargetOn ? targetPine : timeframe.period
-string liquiditySelected = liquidityChoice == "Same" ? targetChoice : liquidityChoice
+string liquiditySelected = liquidityChoice == "Same" ? (htfEqTarget ? "Off" : targetChoice) : liquidityChoice
 string liquidityPine = liquiditySelected == "Daily" ? "D" : liquiditySelected == "4H" ? "240" : liquiditySelected == "1H" ? "60" : liquiditySelected == "15M" ? "15" : liquiditySelected == "5M" ? "5" : liquiditySelected == "1M" ? "1" : timeframe.period
 bool liquidityTfOk = liquiditySelected != "Off" and timeframe.in_seconds(liquidityPine) >= timeframe.in_seconds()
 bool liquidityOn = liquidityChoice != "Off" and liquidityTfOk
@@ -244,6 +245,13 @@ var line[] sweepLines = array.new<line>()
 var int[] sweepLabelBars = array.new<int>()
 var int[] sweepLabelSides = array.new<int>()
 var int[] sweepLabelKinds = array.new<int>()
+var int candle3LiveTime = na
+var line candle3SweepLine = na
+var line candle3EqLine = na
+var line candle3OpenLine = na
+var label candle3SweepTag = na
+var label candle3EqTag = na
+var label candle3OpenTag = na
 
 f_releaseMark(line markLine, label markLabel) =>
     if not na(markLabel)
@@ -497,6 +505,15 @@ if swingTargetOn and not na(closedTargetTime) and (na(lastTargetTime) or closedT
 // through the swept side invalidates that sweep before the mark. A wick does not.
 [closedLiqTime, closedLiqHigh, closedLiqLow] = request.security(
      syminfo.tickerid, safeLiquidityPine, [time[1], high[1], low[1]], lookahead = barmerge.lookahead_on)
+int liqTime = request.security(syminfo.tickerid, safeLiquidityPine, time, lookahead = barmerge.lookahead_on)
+float liqOpen = request.security(syminfo.tickerid, safeLiquidityPine, open, lookahead = barmerge.lookahead_on)
+int liqTime1 = request.security(syminfo.tickerid, safeLiquidityPine, time[1], lookahead = barmerge.lookahead_on)
+float liqHigh1 = request.security(syminfo.tickerid, safeLiquidityPine, high[1], lookahead = barmerge.lookahead_on)
+float liqLow1 = request.security(syminfo.tickerid, safeLiquidityPine, low[1], lookahead = barmerge.lookahead_on)
+float liqClose1 = request.security(syminfo.tickerid, safeLiquidityPine, close[1], lookahead = barmerge.lookahead_on)
+int liqTime2 = request.security(syminfo.tickerid, safeLiquidityPine, time[2], lookahead = barmerge.lookahead_on)
+float liqHigh2 = request.security(syminfo.tickerid, safeLiquidityPine, high[2], lookahead = barmerge.lookahead_on)
+float liqLow2 = request.security(syminfo.tickerid, safeLiquidityPine, low[2], lookahead = barmerge.lookahead_on)
 
 var int lastBullSweepBar = na
 var int lastBearSweepBar = na
@@ -510,6 +527,8 @@ var float firstBullSweepPrice = na
 var float firstBearSweepPrice = na
 var float bullSweepLevel = na
 var float bearSweepLevel = na
+var float bullSweepEq = na
+var float bearSweepEq = na
 var bool bullSweepValid = false
 var bool bearSweepValid = false
 var int bullBreachBar = na
@@ -532,6 +551,7 @@ if barstate.isconfirmed and liquidityOn and not na(closedLiqTime) and not na(clo
         lastBullSweepBar := bar_index
         lastBullSweepPrice := low
         bullSweepLevel := closedLiqLow
+        bullSweepEq := (closedLiqHigh + closedLiqLow) / 2
         bullSweepValid := true
         if na(bullSweepCandle) or bullSweepCandle != closedLiqTime
             bullSweepCandle := closedLiqTime
@@ -541,6 +561,7 @@ if barstate.isconfirmed and liquidityOn and not na(closedLiqTime) and not na(clo
         lastBearSweepBar := bar_index
         lastBearSweepPrice := high
         bearSweepLevel := closedLiqHigh
+        bearSweepEq := (closedLiqHigh + closedLiqLow) / 2
         bearSweepValid := true
         if na(bearSweepCandle) or bearSweepCandle != closedLiqTime
             bearSweepCandle := closedLiqTime
@@ -595,6 +616,7 @@ if barstate.isconfirmed and liquidityOn and not na(closedLiqTime) and not na(clo
         bearBreachSwept := false
         bullSweepValid := false
         bullSweepCandle := na
+        bullSweepEq := na
         firstBullSweepBar := na
         firstBullSweepPrice := na
     if bearSweepValid and not na(lastBearSweepBar) and bar_index != lastBearSweepBar and close > bearSweepLevel
@@ -604,6 +626,7 @@ if barstate.isconfirmed and liquidityOn and not na(closedLiqTime) and not na(clo
         bullBreachSwept := false
         bearSweepValid := false
         bearSweepCandle := na
+        bearSweepEq := na
         firstBearSweepBar := na
         firstBearSweepPrice := na
 
@@ -612,7 +635,7 @@ if barstate.isconfirmed and liquidityOn and not na(closedLiqTime) and not na(clo
 // close back inside that candle's range. Liquidity Lookback counts from that
 // close. The liquidity sweep can be older. One side of a key candle arms once,
 // and a later close through the same side opens the watch again.
-string keySelected = keyLevelChoice == "Same" ? targetChoice : keyLevelChoice
+string keySelected = keyLevelChoice == "Same" ? (htfEqTarget ? "Off" : targetChoice) : keyLevelChoice
 string keyPine = keySelected == "Daily" ? "D" : keySelected == "4H" ? "240" : keySelected == "1H" ? "60" : keySelected == "15M" ? "15" : keySelected == "5M" ? "5" : keySelected == "1M" ? "1" : timeframe.period
 bool keyTfOk = keySelected != "Off" and timeframe.in_seconds(keyPine) >= timeframe.in_seconds()
 bool keyLevelOn = keyLevelChoice != "Off" and keyTfOk
@@ -804,20 +827,24 @@ latestSwing(float price, bool bullish) =>
                 break
     [foundPrice, foundTime]
 
-f_target(float entry, float stopLevel, bool bullish) =>
+f_target(float entry, float stopLevel, bool bullish, float eqPrice) =>
     float risk = bullish ? entry - stopLevel : stopLevel - entry
     float resultPrice = na
     int resultTime = na
     bool underMin = false
-    // The final target decides the mark: the swing, the two-times fallback, or the Max Target cap.
+    // The final target decides the mark: the swept-candle midpoint, the swing, the two-times fallback, or the Max Target cap.
     bool htfTooClose = false
     bool stopOk = risk > 0
     if targetOn and stopOk
+        if htfEqTarget
+            float eqReward = na(eqPrice) ? na : (bullish ? eqPrice - entry : entry - eqPrice)
+            bool eqKeeps = not na(eqReward) and eqReward >= risk * 2
+            resultPrice := eqKeeps ? eqPrice : (bullish ? entry + risk * 2 : entry - risk * 2)
         if swingTargetOn
             [swingPrice, swingTime] = latestSwing(entry, bullish)
             resultPrice := na(swingPrice) ? (bullish ? entry + risk * 2 : entry - risk * 2) : swingPrice
             resultTime := na(swingPrice) ? na : swingTime
-        else if maxTarget > 0
+        if not htfEqTarget and not swingTargetOn and maxTarget > 0
             resultPrice := bullish ? entry + risk * maxTarget : entry - risk * maxTarget
         float reward = na(resultPrice) ? na : (bullish ? resultPrice - entry : entry - resultPrice)
         if maxTarget > 0 and not na(resultTime) and not na(reward) and reward > maxTarget * risk
@@ -840,9 +867,9 @@ f_target(float entry, float stopLevel, bool bullish) =>
 // flip candle. Limit at the swing keeps the swing prices. A stop on the wrong
 // side of that close leaves the mark off. The market level is one expression
 // so the returned price is that close on every bar the option is on.
-f_resolveEntry(float swingLevel, float stopLevel, float swingTarget, int swingAnchor, bool swingUnder, bool swingTooClose, bool bullish, float marketPrice) =>
+f_resolveEntry(float swingLevel, float stopLevel, float swingTarget, int swingAnchor, bool swingUnder, bool swingTooClose, bool bullish, float marketPrice, float eqPrice) =>
     bool stopSide = bullish ? stopLevel < marketPrice : stopLevel > marketPrice
-    [marketTarget, marketAnchor, marketUnder, marketTooClose] = f_target(marketPrice, stopLevel, bullish)
+    [marketTarget, marketAnchor, marketUnder, marketTooClose] = f_target(marketPrice, stopLevel, bullish, eqPrice)
     float level = marketEntry ? marketPrice : swingLevel
     float target = marketEntry ? (stopSide ? marketTarget : na) : swingTarget
     int anchor = marketEntry ? (stopSide ? marketAnchor : na) : swingAnchor
@@ -965,6 +992,53 @@ bool bearishBreakNow = barstate.isconfirmed and swingLowOpen and close < swingLo
 // leaves the setup undrawn. Skip Sundays leaves the swing unused and leaves the
 // current mark in place.
 bool sundaySkipped = skipSundays and dayofweek(time, timeZone) == dayofweek.sunday
+// The previous liquidity candle closed inside the one before it and took one extreme.
+// While this liquidity candle is open, its open is candle #3 and that previous
+// candle's midpoint is candle #2 EQ. Both lines, and the swept extreme, go away
+// on the first chart bar after this liquidity candle closes.
+bool liqSweptHigh = liqHigh1 > liqHigh2
+bool liqSweptLow = liqLow1 < liqLow2
+bool candle3Live = liquidityOn and not sundaySkipped and not na(liqOpen) and not na(liqClose1) and not na(liqHigh2) and liqClose1 < liqHigh2 and liqClose1 > liqLow2 and liqSweptHigh != liqSweptLow
+bool candle3Ended = not na(candle3LiveTime) and liqTime != candle3LiveTime
+if candle3Ended
+    line.delete(candle3SweepLine)
+    label.delete(candle3SweepTag)
+    line.delete(candle3EqLine)
+    label.delete(candle3EqTag)
+    line.delete(candle3OpenLine)
+    label.delete(candle3OpenTag)
+    candle3SweepLine := na
+    candle3SweepTag := na
+    candle3EqLine := na
+    candle3EqTag := na
+    candle3OpenLine := na
+    candle3OpenTag := na
+    candle3LiveTime := na
+bool candle3Start = candle3Live and na(candle3LiveTime)
+if candle3Start
+    float candle2Eq = (liqHigh1 + liqLow1) / 2
+    float sweepPrice = liqSweptLow ? liqLow2 : liqHigh2
+    color markColor = liqSweptLow ? bullObColor : bearObColor
+    candle3SweepLine := line.new(liqTime2, sweepPrice, liqTime, sweepPrice,
+         xloc = xloc.bar_time, extend = extend.right, color = markColor, style = line.style_dashed, width = 1)
+    candle3SweepTag := label.new(bar_index, sweepPrice, "Sweep",
+         xloc = xloc.bar_index, yloc = yloc.price, color = markColor,
+         style = label.style_label_left, textcolor = color.white, size = size.small)
+    candle3EqLine := line.new(liqTime1, candle2Eq, liqTime, candle2Eq,
+         xloc = xloc.bar_time, extend = extend.right, color = markColor, width = 1)
+    candle3EqTag := label.new(bar_index, candle2Eq, "candle #2 EQ",
+         xloc = xloc.bar_index, yloc = yloc.price, color = markColor,
+         style = label.style_label_left, textcolor = color.white, size = size.small)
+    candle3OpenLine := line.new(liqTime, liqOpen, time, liqOpen,
+         xloc = xloc.bar_time, extend = extend.right, color = markColor, width = 1)
+    candle3OpenTag := label.new(bar_index, liqOpen, "candle #3",
+         xloc = xloc.bar_index, yloc = yloc.price, color = markColor,
+         style = label.style_label_left, textcolor = color.white, size = size.small)
+    candle3LiveTime := liqTime
+if not na(candle3LiveTime)
+    label.set_x(candle3SweepTag, bar_index)
+    label.set_x(candle3EqTag, bar_index)
+    label.set_x(candle3OpenTag, bar_index)
 // A traded target finishes that setup. It is no longer the flip reference.
 if barstate.isconfirmed and printedDirection != 0 and not na(printedTarget)
     bool printedTargetHit = printedDirection == DIR_BULL ? high >= printedTarget : low <= printedTarget
@@ -986,7 +1060,8 @@ if barstate.isconfirmed and armedDirection != 0
         bool bothWindow = bothEntry and (armedMarketLive or f_inWindow())
         if confirmedFvg and sweepStillValid and (confirmWindow or bothWindow)
             float displacementClose = close[1]
-            [resolvedLevel, useTarget, useAnchor, useUnder, useTooClose] = f_resolveEntry(armedLevel, armedStop, armedTarget, armedTargetTime, armedUnder, false, armedDirection == DIR_BULL, displacementClose)
+            float confirmEq = armedOpposingSweep ? (armedDirection == DIR_BULL ? bearSweepEq : bullSweepEq) : (armedDirection == DIR_BULL ? bullSweepEq : bearSweepEq)
+            [resolvedLevel, useTarget, useAnchor, useUnder, useTooClose] = f_resolveEntry(armedLevel, armedStop, armedTarget, armedTargetTime, armedUnder, false, armedDirection == DIR_BULL, displacementClose, confirmEq)
             float useLevel = marketEntry ? displacementClose : resolvedLevel
             bool flipMarketOk = armedMarketLive and f_entryOk(armedDirection, displacementClose, armedStop)
             bool flipLimitOk = not armedSwingTooClose and f_inWindow() and f_entryOk(armedDirection, armedLevel, armedSwingStop)
@@ -1093,8 +1168,10 @@ float ifvgOpen = open
 float ifvgLimit = ifvgBull ? ifvgGapTop : ifvgGapBottom
 int ifvgDirection = ifvgBull ? DIR_BULL : DIR_BEAR
 bool ifvgStopSide = ifvgBull ? ifvgOpen < ifvgClose and ifvgOpen < ifvgLimit : ifvgOpen > ifvgClose and ifvgOpen > ifvgLimit
-[ifvgMarketTarget, ifvgMarketAnchor, ifvgMarketUnder, ifvgMarketTooClose] = f_target(ifvgClose, ifvgOpen, ifvgBull)
-[ifvgLimitTarget, ifvgLimitAnchor, ifvgLimitUnder, ifvgLimitTooClose] = f_target(ifvgLimit, ifvgOpen, ifvgBull)
+bool ifvgUsesBull = ifvgBull ? not ifvgBullFlip : ifvgBearFlip
+float ifvgEq = ifvgUsesBull ? bullSweepEq : bearSweepEq
+[ifvgMarketTarget, ifvgMarketAnchor, ifvgMarketUnder, ifvgMarketTooClose] = f_target(ifvgClose, ifvgOpen, ifvgBull, ifvgEq)
+[ifvgLimitTarget, ifvgLimitAnchor, ifvgLimitUnder, ifvgLimitTooClose] = f_target(ifvgLimit, ifvgOpen, ifvgBull, ifvgEq)
 bool ifvgFlip = (ifvgBull and ifvgBullFlip) or (ifvgBear and ifvgBearFlip)
 bool ifvgMarketOk = ifvgOn and ifvgStopSide and not ifvgMarketTooClose and f_entryOk(ifvgDirection, ifvgClose, ifvgOpen)
 bool ifvgLimitOk = ifvgOn and ifvgStopSide and not ifvgLimitTooClose and f_entryOk(ifvgDirection, ifvgLimit, ifvgOpen)
@@ -1107,7 +1184,9 @@ if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar an
     int kind = structureDirection == DIR_BULL ? KIND_BOS : KIND_MSS
     structureDirection := DIR_BULL
     brokenHighBar := swingHighBar
-    [targetPrice, targetAnchor, underMinRr, htfTooClose] = f_target(swingHigh, low[1], true)
+    bool bullFlip = f_flipLiquidity(true) and f_keyOk(true) and not f_flipSpent(true)
+    float bullEq = bullFlip ? bearSweepEq : bullSweepEq
+    [targetPrice, targetAnchor, underMinRr, htfTooClose] = f_target(swingHigh, low[1], true, bullEq)
     // A final target inside Min RR, or a sweep outside the lookback, is booked and left unmarked.
     // Market at close checks Min RR on the displacement close, against that candle's open.
     float bullArmClose = close
@@ -1116,9 +1195,8 @@ if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar an
     float bullArmTarget = na
     int bullArmAnchor = na
     bool bullArmUnder = false
-    bool bullFlip = f_flipLiquidity(true) and f_keyOk(true) and not f_flipSpent(true)
     if marketEntry or bothEntry or bullFlip
-        [bullArmTarget, bullArmAnchor, bullArmUnder, bullArmTooClose] = f_target(bullArmClose, bullArmOpen, true)
+        [bullArmTarget, bullArmAnchor, bullArmUnder, bullArmTooClose] = f_target(bullArmClose, bullArmOpen, true, bullEq)
     bool bullMarketOk = not bullArmTooClose and f_entryOk(DIR_BULL, bullArmClose, bullArmOpen)
     bool bullLimitOk = not htfTooClose and f_entryOk(DIR_BULL, swingHigh, low[1])
     bool bullFlipTake = bullFlip and (bullMarketOk or bullLimitOk)
@@ -1173,16 +1251,17 @@ if patternSwing and not ifvgTake and not sundaySkipped and not flippedThisBar an
     int kind = structureDirection == DIR_BEAR ? KIND_BOS : KIND_MSS
     structureDirection := DIR_BEAR
     brokenLowBar := swingLowBar
-    [targetPrice, targetAnchor, underMinRr, htfTooClose] = f_target(swingLow, high[1], false)
+    bool bearFlip = f_flipLiquidity(false) and f_keyOk(false) and not f_flipSpent(false)
+    float bearEq = bearFlip ? bullSweepEq : bearSweepEq
+    [targetPrice, targetAnchor, underMinRr, htfTooClose] = f_target(swingLow, high[1], false, bearEq)
     float bearArmClose = close
     float bearArmOpen = open
     bool bearArmTooClose = true
     float bearArmTarget = na
     int bearArmAnchor = na
     bool bearArmUnder = false
-    bool bearFlip = f_flipLiquidity(false) and f_keyOk(false) and not f_flipSpent(false)
     if marketEntry or bothEntry or bearFlip
-        [bearArmTarget, bearArmAnchor, bearArmUnder, bearArmTooClose] = f_target(bearArmClose, bearArmOpen, false)
+        [bearArmTarget, bearArmAnchor, bearArmUnder, bearArmTooClose] = f_target(bearArmClose, bearArmOpen, false, bearEq)
     bool bearMarketOk = not bearArmTooClose and f_entryOk(DIR_BEAR, bearArmClose, bearArmOpen)
     bool bearLimitOk = not htfTooClose and f_entryOk(DIR_BEAR, swingLow, high[1])
     bool bearFlipTake = bearFlip and (bearMarketOk or bearLimitOk)
@@ -1246,7 +1325,8 @@ if patternSwing and not ifvgTake and continuationDir != 0 and barstate.isconfirm
     float continuationRisk = math.abs(continuationClose - continuationOpen)
     float vwapDistance = continuationBull ? continuationClose - sessionVwap : sessionVwap - continuationClose
     bool vwapChased = useVwapChase and not na(sessionVwap) and continuationRisk > 0 and vwapDistance > vwapChase * continuationRisk
-    [continuationTarget, continuationAnchor, continuationUnder, continuationTooClose] = f_target(continuationClose, continuationOpen, continuationBull)
+    float continuationEq = continuationBull ? bullSweepEq : bearSweepEq
+    [continuationTarget, continuationAnchor, continuationUnder, continuationTooClose] = f_target(continuationClose, continuationOpen, continuationBull, continuationEq)
     bool continuationLiquidity = f_liquidityOk(continuationBull)
     if continuationStopSide and not continuationTooClose and not vwapChased and f_keyOk(continuationBull) and f_committed(continuationBull) and continuationLiquidity
         int continuationKind = structureDirection == continuationDir ? KIND_BOS : KIND_MSS
