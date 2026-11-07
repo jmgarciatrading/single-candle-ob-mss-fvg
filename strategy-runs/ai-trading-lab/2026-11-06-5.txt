@@ -1,0 +1,53 @@
+Single Candle OB + MSS + FVG, lab replay
+Date: 2026-11-06
+Stage 2. Fitted sample only. The rules were not changed.
+
+Lab file: AI/ai-futures-trading-lab/data/mes-fut-20260501-20261030.ohlcv-1m.csv.zst
+Window: 2026-05-01 through 2026-10-30. 35940 five-minute bars.
+Series: back-adjusted MES front month. One contract. Commission 0. One point is 5 dollars.
+Policy: t1005-r8-long22, from lab commit 078490d.
+The chart search used for this replay is that commit, exported aside.
+The dirty working tree of experiments/single_candle_chart_search.py was not used.
+
+Chart: five minutes. Market at the close.
+Close Location off. Target 4H, target swing 6, Min RR 2, Max Target 14.
+Liquidity 4H, key level off, lookback 1, VWAP chase off.
+Structure window 09:30-16:00 New York, every minute. Skip Sundays off.
+No new entry before 10:05 New York.
+The last six five-minute bars must span at least 8 points.
+No long whose fill is more than 22 points above that day's 09:30 open.
+No order whose stop is wider than 30 points.
+A trade in profit at the previous close is not closed or reversed by the next signal.
+A same-session trade still open at 15:55 is flattened at that bar's close.
+A later signal cannot fill worse than the original stop in this replay.
+
+This Python book does not include the third-candle wick check, the flip, OB + iFVG,
+HTF EQ, candle #3, or candle #2 EQ. Those rules are in the Pine files.
+This replay is the frozen book again.
+
+Rolls: MESM6 to MESU6 on 20260614, spread 63.00, 120 minutes.
+MESU6 to MESZ6 on 20260914, spread 67.25, 1380 minutes.
+MESM6 offset 130.25, 8484 bars. MESU6 offset 67.25, 17820 bars. MESZ6 offset 0, 9636 bars.
+
+                 Fitted sample
+Trades           287
+Net              $4,227.50
+Profit factor    1.827
+Drawdown         $556.25
+Worst loss       -$86.25
+Without the best trade  $3,702.50
+First half / second half  $3,317.50 / $910.00
+Trades of 80 points or more  4
+
+81 wins, 205 losses, 1 scratch. No trade is still open.
+Widest stop 29 points. 7 exits were capped at the original stop.
+The first half is entries before 2026-08-01 New York.
+The four trades of 80 points or more:
+2026-06-05 11:20 short, +105 points, +$525.00
+2026-06-09 10:10 short, +81.50 points, +$407.50
+2026-06-09 12:55 long, +104.50 points, +$522.50
+2026-06-17 10:30 short, +98 points, +$490.00
+
+Drawdown: peak 2026-07-27 05:45 at +$3,640.00, trough 2026-07-29 15:25 at +$3,083.75.
+Account low -$82.50 on 2026-05-01 13:50.
+This matches the frozen fitted book.

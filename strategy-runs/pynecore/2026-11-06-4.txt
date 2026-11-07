@@ -1,0 +1,45 @@
+Single Candle OB + MSS + FVG, PyneCore run
+Date: 2026-11-06
+Stage 1. Fitted sample only. No gate was retuned.
+
+Script: Single_Candle_OB_MSS_FVG_Strategy.pine, working tree on 856bc49.
+Compiler: PyneCore, workdir /home/vesper/.local/share/pynecore/workdir
+Compiled to scripts/Single_Candle_OB_MSS_FVG_Strategy.py
+That compiled file stays out of this repository.
+
+Data: mes-front.ohlcv, the unadjusted front-month series of the fitted sample.
+Window: 2026-05-01 through 2026-10-30. Chart timeframe 5.
+pointvalue is 1, so the figures below are points, not MES dollars.
+This series is not the back-adjusted lab book.
+
+Pattern OB + MSS + FVG
+Close Location 0, Timeframe Target 4H, Min RR 2, Max Target 14, Target Swing Length 6
+Liquidity Timeframe 4H, Key Level Off, Liquidity Lookback 1, VWAP Chase off
+Structure window 09:30-16:00 America/New_York, minutes 0-60, Skip Sundays off
+Entry Model Market at close
+Entry From 10:05, Min Range 8, Long Extension 22, Max Stop 30
+Hold Winner on, Flat At 15:55 on, Contracts 1, commission 0
+
+HTF EQ is in the script and was not selected. This run does not measure that midpoint or its 2R fallback.
+candle #3 and candle #2 EQ are drawings on the liquidity candle. They send no order.
+The earlier stage 1 on this file, before the flip orders, was 26 trades, net -126.25 points.
+
+                 Fitted sample, unadjusted, points
+Trades           31
+Net              -35.00
+Profit factor    0.830
+Drawdown         118.75
+Worst loss       -19.75
+Without the best trade  -69.00
+First half / second half  83.25 / -118.25
+Trades of 80 points or more  0
+
+10 wins, 21 losses, 0 scratches. No trade is still open.
+The first half is entries before 2026-08-01 New York.
+The largest trade is the 2026-07-24 12:35 New York short, +34.00 points, closed at the session flat.
+The largest loss is the 2026-10-19 10:15 New York long, -19.75 points.
+No entry is named Flip. Two trades closed on a later Formation. Eight closed at the session flat.
+No trade reached 80 points.
+
+Months, in points, by exit: May +42.75, Jun +1.00, Jul +39.50, Aug -50.75, Sep -51.00, Oct -16.50.
+Losing months: August -50.75, September -51.00, October -16.50.
