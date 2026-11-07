@@ -1,0 +1,45 @@
+Single Candle OB + MSS + FVG, PyneCore run
+Date: 2026-11-06
+Stage 1. Fitted sample only. No gate was retuned.
+
+Script: Single_Candle_OB_MSS_FVG_Strategy.pine, compiled from ed2c2c1.
+Compiler: PyneCore, workdir /home/vesper/.local/share/pynecore/workdir
+Compiled to scripts/Single_Candle_OB_MSS_FVG_Strategy.py
+That compiled file stays out of this repository.
+This compile predates the later drawing edit that ends the candle #3 lines at the current chart candle. Those lines send no order.
+
+Data: mes-front.ohlcv, the unadjusted front-month series of the fitted sample.
+Window: 2026-05-01 through 2026-10-30. Chart timeframe 5.
+pointvalue is 1, so the figures below are points, not MES dollars.
+This series is not the back-adjusted lab book.
+
+Pattern OB + MSS + FVG
+Close Location 0, Timeframe Target 1H, Min RR 2, Max Target 14, Target Swing Length 6
+Liquidity Timeframe 1H, Key Level Off, Liquidity Lookback 1, VWAP Chase off
+Structure window 09:30-16:00 America/New_York, minutes 0-60, Skip Sundays off
+Entry Model Market at close
+Entry From 10:05, Min Range 8, Long Extension 22, Max Stop 30
+Hold Winner on, Flat At 15:55 on, Contracts 1, commission 0
+
+HTF EQ was not selected. The same run with Liquidity 4H and Timeframe Target 4H is 2026-11-06-4.txt: 31 trades, net -35.00, profit factor 0.830, drawdown 118.75.
+
+                 Fitted sample, unadjusted, points
+Trades           50
+Net              41.75
+Profit factor    1.120
+Drawdown         129.25
+Worst loss       -58.50
+Without the best trade  -13.00
+First half / second half  135.00 / -93.25
+Trades of 80 points or more  0
+
+15 wins, 35 losses, 0 scratches. No trade is still open.
+The first half is entries before 2026-08-01 New York.
+The largest trade is the 2026-06-04 16:00 New York short, +54.75 points, closed on 1C Exit.
+The largest loss is the 2026-06-17 13:55 New York long, -58.50 points, closed on 1C Exit.
+That loss is wider than the 30-point stop because this engine fills the stop at the bar close once the stop has traded.
+No entry is named Flip. Three trades closed on a later Formation. Fifteen closed at the session flat. Thirty-two closed on 1C Exit.
+No trade reached 80 points.
+
+Months, in points, by exit: May +9.50, Jun +10.50, Jul +115.00, Aug -38.50, Sep -59.50, Oct +4.75.
+Losing months: August -38.50, September -59.50.
