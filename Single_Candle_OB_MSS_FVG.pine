@@ -994,8 +994,9 @@ bool bearishBreakNow = barstate.isconfirmed and swingLowOpen and close < swingLo
 bool sundaySkipped = skipSundays and dayofweek(time, timeZone) == dayofweek.sunday
 // The previous liquidity candle closed inside the one before it and took one extreme.
 // While this liquidity candle is open, its open is candle #3 and that previous
-// candle's midpoint is candle #2 EQ. Both lines, and the swept extreme, go away
-// on the first chart bar after this liquidity candle closes.
+// candle's midpoint is candle #2 EQ. The sweep, that midpoint, and the open end
+// at the current chart candle. They go away on the first chart bar after this
+// liquidity candle closes.
 bool liqSweptHigh = liqHigh1 > liqHigh2
 bool liqSweptLow = liqLow1 < liqLow2
 bool candle3Live = liquidityOn and not sundaySkipped and not na(liqOpen) and not na(liqClose1) and not na(liqHigh2) and liqClose1 < liqHigh2 and liqClose1 > liqLow2 and liqSweptHigh != liqSweptLow
@@ -1015,27 +1016,31 @@ if candle3Ended
     candle3OpenTag := na
     candle3LiveTime := na
 bool candle3Start = candle3Live and na(candle3LiveTime)
+int candle3Right = time_close
 if candle3Start
     float candle2Eq = (liqHigh1 + liqLow1) / 2
     float sweepPrice = liqSweptLow ? liqLow2 : liqHigh2
     color markColor = liqSweptLow ? bullObColor : bearObColor
-    candle3SweepLine := line.new(liqTime2, sweepPrice, liqTime, sweepPrice,
-         xloc = xloc.bar_time, extend = extend.right, color = markColor, style = line.style_dashed, width = 1)
+    candle3SweepLine := line.new(liqTime2, sweepPrice, candle3Right, sweepPrice,
+         xloc = xloc.bar_time, color = markColor, style = line.style_dashed, width = 1)
     candle3SweepTag := label.new(bar_index, sweepPrice, "Sweep",
          xloc = xloc.bar_index, yloc = yloc.price, color = markColor,
          style = label.style_label_left, textcolor = color.white, size = size.small)
-    candle3EqLine := line.new(liqTime1, candle2Eq, liqTime, candle2Eq,
-         xloc = xloc.bar_time, extend = extend.right, color = markColor, width = 1)
+    candle3EqLine := line.new(liqTime1, candle2Eq, candle3Right, candle2Eq,
+         xloc = xloc.bar_time, color = markColor, width = 1)
     candle3EqTag := label.new(bar_index, candle2Eq, "candle #2 EQ",
          xloc = xloc.bar_index, yloc = yloc.price, color = markColor,
          style = label.style_label_left, textcolor = color.white, size = size.small)
-    candle3OpenLine := line.new(liqTime, liqOpen, time, liqOpen,
-         xloc = xloc.bar_time, extend = extend.right, color = markColor, width = 1)
+    candle3OpenLine := line.new(liqTime, liqOpen, candle3Right, liqOpen,
+         xloc = xloc.bar_time, color = markColor, width = 1)
     candle3OpenTag := label.new(bar_index, liqOpen, "candle #3",
          xloc = xloc.bar_index, yloc = yloc.price, color = markColor,
          style = label.style_label_left, textcolor = color.white, size = size.small)
     candle3LiveTime := liqTime
 if not na(candle3LiveTime)
+    line.set_x2(candle3SweepLine, candle3Right)
+    line.set_x2(candle3EqLine, candle3Right)
+    line.set_x2(candle3OpenLine, candle3Right)
     label.set_x(candle3SweepTag, bar_index)
     label.set_x(candle3EqTag, bar_index)
     label.set_x(candle3OpenTag, bar_index)
